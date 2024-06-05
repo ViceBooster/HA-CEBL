@@ -34,7 +34,8 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
         """Initialize."""
         self.entry = entry
         self.session = async_get_clientsession(hass)
-        self.url = API_URL_FIXTURES
+        self.url_fixtures = API_URL_FIXTURES
+        self.url_live = API_URL_LIVE
         self.teams = entry.data.get("teams", [])
         _LOGGER.info(f"Initializing CEBLDataUpdateCoordinator with teams: {self.teams}")
         super().__init__(
@@ -49,16 +50,25 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.info("Fetching CEBL data from API.")
         try:
             async with async_timeout.timeout(10):
-                async with self.session.get(self.url) as response:
+                async with self.session.get(self.url_fixtures) as response:
                     if response.status != 200:
                         _LOGGER.error(f"Invalid response from API: {response.status}")
                         raise UpdateFailed(f"Invalid response from API: {response.status}")
-                    data = await response.json()
-                    _LOGGER.debug(f"Fetched data: {data}")
-                    fixtures = [fixture for fixture in data["fixtures"] 
+                    fixtures_data = await response.json()
+                    _LOGGER.debug(f"Fetched fixtures data: {fixtures_data}")
+                    
+                    fixtures = [fixture for fixture in fixtures_data["fixtures"] 
                                 if str(fixture["homeTeam"]["id"]) in self.teams or str(fixture["awayTeam"]["id"]) in self.teams]
-                    _LOGGER.info(f"Fetched fixtures: {fixtures}")
-                    return {"fixtures": fixtures}
+
+                async with self.session.get(self.url_live) as response:
+                    if response.status != 200:
+                        _LOGGER.error(f"Invalid response from API: {response.status}")
+                        raise UpdateFailed(f"Invalid response from API: {response.status}")
+                    live_data = await response.json()
+                    _LOGGER.debug(f"Fetched live data: {live_data}")
+
+                    return {"fixtures": fixtures, "live": live_data}
+
         except aiohttp.ClientError as err:
             _LOGGER.error(f"HTTP error fetching teams: {err}")
             raise UpdateFailed(f"HTTP error fetching teams: {err}")
