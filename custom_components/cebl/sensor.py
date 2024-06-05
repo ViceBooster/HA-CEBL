@@ -1,3 +1,5 @@
+""" sensor.py file """
+
 import logging
 from datetime import datetime, timedelta
 import pytz
