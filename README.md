@@ -5,8 +5,8 @@ Welcome to the CEBL Home Assistant Integration! This integration allows you to t
 ## Features
 
 - Fetch and display upcoming fixtures for selected CEBL teams.
-- Provides details about the fixtures including date, time, venue, opponent, and more.
-- Updates every 10 minutes to ensure you have the latest information.
+- Provides details about the fixtures including score, date, time, venue, opponent, and more.
+- Updates every 10 minutes to ensure you have the latest information, and every 1 minute if a game is live.
 
 ## Installation
 
@@ -49,6 +49,8 @@ Welcome to the CEBL Home Assistant Integration! This integration allows you to t
 
 The integration creates sensors that provide information about the upcoming fixtures for the selected team. The sensors include attributes such as:
 - Fixture date and time
+- Team and opponent logos
+- Score
 - Venue
 - Opponent details
 - Time until kickoff
@@ -62,8 +64,8 @@ You can use these sensors in your Home Assistant dashboard, automations, and scr
   - Check the Home Assistant logs for any error messages.
 
 - **Data Not Updating:**
-  - The data updates every 10 minutes. Ensure you wait for this interval.
-  - Check your internet connection and the API status.
+  - The data updates every 10 minutes (1 minute if live). Ensure you wait for this interval.
+  - Check your internet connection.
 
 ## Contributing
 
