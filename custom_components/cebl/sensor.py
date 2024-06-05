@@ -21,7 +21,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     coordinator = hass.data[DOMAIN][entry.entry_id]
     sensors = [
         CEBLSensor(coordinator, team_id)
-        for team_id in entry.data["teams"]
+        for team_id in coordinator.entry.data["teams"]
     ]
 
     if not sensors:
@@ -43,7 +43,7 @@ class CEBLSensor(CoordinatorEntity, Entity):
 
     @property
     def name(self):
-        return f"CEBL - {self._attributes.get('team_name', 'Team')}"
+        return f"CEBL {self._attributes.get('team_name', 'Team')}"
 
     @property
     def state(self):
@@ -61,7 +61,6 @@ class CEBLSensor(CoordinatorEntity, Entity):
         """Update the sensor state."""
         await self.coordinator.async_request_refresh()
         self._update()
-        self.async_write_ha_state()  # Notify Home Assistant of the state change
 
     def _update(self):
         data = self.coordinator.data
@@ -125,26 +124,12 @@ class CEBLSensor(CoordinatorEntity, Entity):
         days, seconds = delta.days, delta.seconds
         hours = seconds // 3600
         minutes = (seconds % 3600) // 60
-        if delta.total_seconds() > 0:
-            if days > 0:
-                return f"in {days} days"
-            elif hours > 0:
-                return f"in {hours} hours"
-            elif minutes > 0:
-                return f"in {minutes} minutes"
-            else:
-                return "now"
+        if days > 0:
+            return f"in {days} days"
+        elif hours > 0:
+            return f"in {hours} hours"
         else:
-            delta = now - start_date
-            days, seconds = delta.days, delta.seconds
-            hours = seconds // 3600
-            minutes = (seconds % 3600) // 60
-            if days > 0:
-                return f"{days} days ago"
-            elif hours > 0:
-                return f"{hours} hours ago"
-            else:
-                return f"{minutes} minutes ago"
+            return f"in {minutes} minutes"
 
     async def _update_live_score(self):
         """Fetch and update live score data."""
@@ -158,10 +143,9 @@ class CEBLSensor(CoordinatorEntity, Entity):
                         live_data = await response.json()
 
                     for match in live_data:
-                        if match['homename'] == self._attributes.get('team_name') or match['awayname'] == self._attributes.get('team_name'):
+                        if str(match['hometeamId']) == self._team_id or str(match['awayteamId']) == self._team_id:
                             self._attributes.update(self._parse_live_data(match))
                             self._state = self._determine_live_state(match)
-                            self.async_write_ha_state()  # Notify Home Assistant of the state change
                             break
         except aiohttp.ClientError as e:
             _LOGGER.error(f"Error fetching live score data: {e}")
@@ -169,7 +153,9 @@ class CEBLSensor(CoordinatorEntity, Entity):
     def _parse_live_data(self, match):
         return {
             'match_status': match['matchStatus'],
+            'home_team_name': match['homename'],
             'home_team_score': match['homescore'],
+            'away_team_name': match['awayname'],
             'away_team_score': match['awayscore'],
             'match_period': match['period'],
             'match_clock': match['clock'],
