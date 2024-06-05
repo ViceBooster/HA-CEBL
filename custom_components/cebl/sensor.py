@@ -43,7 +43,7 @@ class CEBLSensor(CoordinatorEntity, Entity):
 
     @property
     def name(self):
-        return f"CEBL {self._attributes.get('team_name', 'Team')}"
+        return f"CEBL - {self._attributes.get('team_name', 'Team')}"
 
     @property
     def state(self):
@@ -100,10 +100,7 @@ class CEBLSensor(CoordinatorEntity, Entity):
             'venue': fixture.get('stadium', {}).get('name'),
             'team_name': home_team['name'] if is_home_team else away_team['name'],
             'team_logo': home_team['logo'] if is_home_team else away_team['logo'],
-            'opponent_abbr': away_team['name'] if is_home_team else home_team['name'],
-            'opponent_id': away_team['id'] if is_home_team else home_team['id'],
             'opponent_name': away_team['name'] if is_home_team else home_team['name'],
-            'opponent_homeaway': 'away' if is_home_team else 'home',
             'opponent_logo': away_team['logo'] if is_home_team else home_team['logo'],
             'last_update': fixture['updatedAt'],
         }
@@ -124,12 +121,26 @@ class CEBLSensor(CoordinatorEntity, Entity):
         days, seconds = delta.days, delta.seconds
         hours = seconds // 3600
         minutes = (seconds % 3600) // 60
-        if days > 0:
-            return f"in {days} days"
-        elif hours > 0:
-            return f"in {hours} hours"
+        if delta.total_seconds() > 0:
+            if days > 0:
+                return f"in {days} days"
+            elif hours > 0:
+                return f"in {hours} hours"
+            elif minutes > 0:
+                return f"in {minutes} minutes"
+            else:
+                return "now"
         else:
-            return f"in {minutes} minutes"
+            delta = now - start_date
+            days, seconds = delta.days, delta.seconds
+            hours = seconds // 3600
+            minutes = (seconds % 3600) // 60
+            if days > 0:
+                return f"{days} days ago"
+            elif hours > 0:
+                return f"{hours} hours ago"
+            else:
+                return f"{minutes} minutes ago"
 
     async def _update_live_score(self):
         """Fetch and update live score data."""
@@ -143,7 +154,7 @@ class CEBLSensor(CoordinatorEntity, Entity):
                         live_data = await response.json()
 
                     for match in live_data:
-                        if str(match['hometeamId']) == self._team_id or str(match['awayteamId']) == self._team_id:
+                        if match['homename'] == self._attributes.get('team_name') or match['awayname'] == self._attributes.get('team_name'):
                             self._attributes.update(self._parse_live_data(match))
                             self._state = self._determine_live_state(match)
                             break
@@ -153,9 +164,7 @@ class CEBLSensor(CoordinatorEntity, Entity):
     def _parse_live_data(self, match):
         return {
             'match_status': match['matchStatus'],
-            'home_team_name': match['homename'],
             'home_team_score': match['homescore'],
-            'away_team_name': match['awayname'],
             'away_team_score': match['awayscore'],
             'match_period': match['period'],
             'match_clock': match['clock'],
