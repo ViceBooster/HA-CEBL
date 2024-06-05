@@ -1,6 +1,6 @@
 {
     "domain": "cebl",
-    "name": "Home Assistant CEBL Tracker",
+    "name": "CEBL Tracker",
     "version": "1.0",
     "documentation": "https://github.com/ViceBooster/HA-CEBL",
     "requirements": [],
