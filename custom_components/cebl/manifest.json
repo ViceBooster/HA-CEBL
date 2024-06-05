@@ -8,7 +8,7 @@
   "codeowners": ["@ViceBooster"],
   "config_flow": true,
   "iot_class": "cloud_polling",
-  "logo": "https://github.com/ViceBooster/HA-CEBL/blob/main/logo.png?raw=true",
-  "icon": "https://github.com/ViceBooster/HA-CEBL/blob/main/logo.png?raw=true",
-  "dark_logo": "https://github.com/ViceBooster/HA-CEBL/blob/main/logo.png?raw=true"
+  "logo": "https://raw.githubusercontent.com/ViceBooster/HA-CEBL/main/cebl/dark_logo.png",
+  "icon": "https://raw.githubusercontent.com/ViceBooster/HA-CEBL/main/cebl/dark_logo.png",
+  "dark_logo": "https://raw.githubusercontent.com/ViceBooster/HA-CEBL/main/cebl/dark_logo.png"
 }
