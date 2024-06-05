@@ -1,11 +1,11 @@
 # CEBL Home Assistant Integration
 
-Welcome to the [CEBL](https://cebl.ca) Home Assistant Integration! This integration was inspiried by [Team Tracker](https://github.com/vasqued2/ha-teamtracker) allows you to track upcoming fixtures for your favorite Canadian Elite Basketball League (CEBL) teams within your Home Assistant setup.
+Welcome to the [CEBL](https://cebl.ca) Home Assistant Integration! This integration was inspiried by [Team Tracker](https://github.com/vasqued2/ha-teamtracker) allows you to track upcoming and live fixtures for your favorite Canadian Elite Basketball League (CEBL) teams within your Home Assistant setup.
 
 ## Features
 
 - Fetch and display upcoming fixtures for selected CEBL teams.
-- Provides details about the fixtures including score, date, time, venue, opponent, and more.
+- Provides details about the fixtures including scores, fixture date, time, venue, opponent, and more.
 - Updates every 10 minutes to ensure you have the latest information, and every 1 minute if a game is live.
 
 ## Installation
