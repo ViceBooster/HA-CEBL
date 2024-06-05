@@ -61,6 +61,7 @@ class CEBLSensor(CoordinatorEntity, Entity):
         """Update the sensor state."""
         await self.coordinator.async_request_refresh()
         self._update()
+        self.async_write_ha_state()  # Notify Home Assistant of the state change
 
     def _update(self):
         data = self.coordinator.data
@@ -160,6 +161,7 @@ class CEBLSensor(CoordinatorEntity, Entity):
                         if match['homename'] == self._attributes.get('team_name') or match['awayname'] == self._attributes.get('team_name'):
                             self._attributes.update(self._parse_live_data(match))
                             self._state = self._determine_live_state(match)
+                            self.async_write_ha_state()  # Notify Home Assistant of the state change
                             break
         except aiohttp.ClientError as e:
             _LOGGER.error(f"Error fetching live score data: {e}")
