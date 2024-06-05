@@ -22,13 +22,16 @@ class CEBLConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             team_name = user_input["team"]
             team_id = self.team_options_reverse[team_name]  # Get team ID from name
-            return self.async_create_entry(title="CEBL", data={"teams": [team_id]})
+            return self.async_create_entry(title=f"CEBL - {team_name}", data={"teams": [team_id]})
 
         # Fetch teams dynamically
         teams = await self._fetch_teams()
         if teams is None:
             errors["base"] = "cannot_connect"
             teams = []
+
+        # Sort teams alphabetically by name
+        teams.sort(key=lambda team: team["name"])
 
         self.team_options = {str(team["id"]): team["name"] for team in teams}  # Ensure team IDs are strings
         self.team_options_reverse = {v: k for k, v in self.team_options.items()}  # Reverse map for lookups
