@@ -7,7 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from .const import DOMAIN, PLATFORMS, STARTUP_MESSAGE, API_URL_FIXTURES
+from .const import DOMAIN, PLATFORMS, STARTUP_MESSAGE, API_URL_FIXTURES, API_URL_LIVE
 
 _LOGGER = logging.getLogger(__name__)
 
