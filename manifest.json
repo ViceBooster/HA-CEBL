@@ -1,14 +1,14 @@
 {
     "domain": "cebl",
     "name": "Home Assistant CEBL Tracker",
-    "version": "0.1",
+    "version": "1.0",
     "documentation": "https://github.com/ViceBooster/HA-CEBL",
     "requirements": [],
     "dependencies": [],
     "codeowners": ["@ViceBooster"],
     "config_flow": true,
     "iot_class": "cloud_polling",
-    "logo": "logo.png",
-    "icon": "logo.png"
-  }
-  
+    "logo": "https://github.com/ViceBooster/HA-CEBL/blob/main/logo.png?raw=true",
+    "icon": "https://github.com/ViceBooster/HA-CEBL/blob/main/logo.png?raw=true",
+    "dark_logo": "https://github.com/ViceBooster/HA-CEBL/blob/main/logo.png?raw=true"
+}
