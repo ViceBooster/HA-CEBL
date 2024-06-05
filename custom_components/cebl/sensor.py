@@ -21,7 +21,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     coordinator = hass.data[DOMAIN][entry.entry_id]
     sensors = [
         CEBLSensor(coordinator, team_id)
-        for team_id in coordinator.entry.data["teams"]
+        for team_id in entry.data["teams"]
     ]
 
     if not sensors:
