@@ -1,5 +1,3 @@
-""" init.py file """
-
 import logging
 import aiohttp
 import async_timeout
@@ -43,7 +41,7 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(minutes=10),
+            update_interval=timedelta(minutes=10),  # Adjust the interval if needed
         )
 
     async def _async_update_data(self):
