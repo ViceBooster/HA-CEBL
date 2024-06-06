@@ -70,7 +70,7 @@ You can use these sensors in your Home Assistant dashboard, automations, and scr
   - Check the Home Assistant logs for any error messages.
 
 - **Data Not Updating:**
-  - The data updates every 10 minutes (1 minute if live). Ensure you wait for this interval.
+  - The data updates every 10 minutes (30 seconds if live). Ensure you wait for this interval.
   - Check your internet connection.
 
 ## Contributing
