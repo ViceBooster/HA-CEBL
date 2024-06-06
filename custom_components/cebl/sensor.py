@@ -41,7 +41,7 @@ class CEBLSensor(CoordinatorEntity, Entity):
         self._update_state()
 
         # Schedule the periodic live score updates
-        async_track_time_interval(self.hass, self._update_live_score, timedelta(minutes=1))
+        async_track_time_interval(self.hass, self._update_live_score, timedelta(seconds=30))
 
     @property
     def name(self):
