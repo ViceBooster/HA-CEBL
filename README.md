@@ -58,6 +58,8 @@ The integration creates sensors that provide information about the upcoming fixt
 - Venue
 - Opponent details
 - Time until kickoff
+- Quarter/Period
+- Period Time left
 
 You can use these sensors in your Home Assistant dashboard, automations, and scripts to create a fully customized experience.
 
