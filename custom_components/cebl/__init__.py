@@ -66,7 +66,6 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
                     else:
                         self.update_interval = timedelta(minutes=10)
                     
-                    self.update_interval = self.update_interval
                     self._async_schedule_refresh()
                     
                     return {"fixtures": fixtures}
