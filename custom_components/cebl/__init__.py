@@ -2,7 +2,7 @@ import logging
 import aiohttp
 import async_timeout
 import asyncio
-from datetime import timedelta
+from datetime import timedelta, datetime
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -36,12 +36,14 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
         self.session = async_get_clientsession(hass)
         self.url = API_URL_FIXTURES
         self.teams = entry.data.get("teams", [])
+        self.is_live = False
+        self.update_interval = timedelta(minutes=10)
         _LOGGER.info(f"Initializing CEBLDataUpdateCoordinator with teams: {self.teams}")
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(minutes=10),
+            update_interval=self.update_interval,
         )
 
     async def _async_update_data(self):
@@ -58,6 +60,16 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
                     fixtures = [fixture for fixture in data["fixtures"] 
                                 if str(fixture["homeTeam"]["id"]) in self.teams or str(fixture["awayTeam"]["id"]) in self.teams]
                     _LOGGER.info(f"Fetched fixtures: {fixtures}")
+                    
+                    # Determine if any fixture is live
+                    self.is_live = any(self._is_fixture_live(fixture) for fixture in fixtures)
+                    _LOGGER.info(f"Is there any live fixture: {self.is_live}")
+
+                    # Adjust update interval
+                    self.update_interval = timedelta(minutes=1) if self.is_live else timedelta(minutes=10)
+                    self.update_interval = self.update_interval
+                    self._async_schedule_refresh()
+
                     return {"fixtures": fixtures}
         except aiohttp.ClientError as err:
             _LOGGER.error(f"HTTP error fetching teams: {err}")
@@ -68,3 +80,11 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.error(f"Unexpected error fetching teams: {err}")
             raise UpdateFailed(f"Unexpected error fetching teams: {err}")
+
+    def _is_fixture_live(self, fixture):
+        """Check if a fixture is currently live."""
+        now = datetime.now(tz=datetime.timezone.utc)
+        start_date = datetime.fromisoformat(fixture['startDate'].replace('Z', '+00:00'))
+        end_date = datetime.fromisoformat(fixture['endDate'].replace('Z', '+00:00'))
+        return start_date <= now <= end_date
+
