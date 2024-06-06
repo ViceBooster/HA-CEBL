@@ -1,6 +1,6 @@
-<center>
+
 ![CEBL Home Assistant Integration](https://upload.wikimedia.org/wikipedia/en/e/ee/Canadian_Elite_Basketball_League_logo.png)
-</center>
+
 
 # CEBL Home Assistant Integration
 
