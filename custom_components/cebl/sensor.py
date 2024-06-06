@@ -135,7 +135,6 @@ class CEBLSensor(CoordinatorEntity, Entity):
             'opponent_name': away_team['name'] if is_home_team else home_team['name'],
             'opponent_homeaway': 'away' if is_home_team else 'home',
             'opponent_logo': away_team['logo'] if is_home_team else home_team['logo'],
-            'last_update': fixture['updatedAt'],
         }
 
     def _determine_state(self, fixture):
