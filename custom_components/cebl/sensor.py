@@ -12,8 +12,6 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-EST = pytz.timezone("America/New_York")
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
     """Set up CEBL sensors from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
@@ -38,7 +36,6 @@ class CEBLSensor(CoordinatorEntity, Entity):
         self._state = None
         self._attributes = {}
         self._unique_id = format_mac(f"cebl_{self._team_id}")
-        self._update_state()
 
         # Schedule the periodic live score updates
         async_track_time_interval(self.hass, self._update_live_score, timedelta(seconds=30))
@@ -58,6 +55,11 @@ class CEBLSensor(CoordinatorEntity, Entity):
     @property
     def extra_state_attributes(self):
         return self._attributes
+
+    async def async_added_to_hass(self):
+        """Run when entity about to be added to Home Assistant."""
+        self.async_on_remove(self.coordinator.async_add_listener(self._update_state))
+        self._update_state()
 
     async def async_update(self):
         """Update the sensor state."""
@@ -85,6 +87,9 @@ class CEBLSensor(CoordinatorEntity, Entity):
             if not self._state or self._state != 'IN':
                 self._state = 'No upcoming fixture'
 
+        if self.entity_id:  # Only write the state if the entity has a valid entity ID
+            self.async_write_ha_state()
+
     async def _update_live_score(self, _):
         """Fetch and update live score data."""
         _LOGGER.debug(f"Updating live score for team ID {self._team_id}")
@@ -98,7 +103,8 @@ class CEBLSensor(CoordinatorEntity, Entity):
                 _LOGGER.debug(f"Live match found for team: {self._attributes.get('team_name')}")
                 self._attributes.update(self._parse_live_data(match))
                 self._state = self._determine_live_state(match)
-                self.async_write_ha_state()  # Notify Home Assistant of state change
+                if self.entity_id:  # Only write the state if the entity has a valid entity ID
+                    self.async_write_ha_state()
                 break
 
     def _parse_live_data(self, match):
@@ -124,11 +130,11 @@ class CEBLSensor(CoordinatorEntity, Entity):
         is_home_team = str(home_team['id']) == self._team_id
 
         start_date_utc = datetime.fromisoformat(fixture['startDate'].replace('Z', '+00:00'))
-        start_date_est = start_date_utc.astimezone(EST)
+        start_date_tz = start_date_utc.astimezone(pytz.timezone(self.hass.config.time_zone))
 
         return {
-            'date': start_date_est.isoformat(),
-            'kickoff_in': self._get_kickoff_in(start_date_est),
+            'date': start_date_tz.isoformat(),
+            'kickoff_in': self._get_kickoff_in(start_date_tz),
             'venue': fixture.get('stadium', {}).get('name'),
             'team_name': home_team['name'] if is_home_team else away_team['name'],
             'team_logo': home_team['logo'] if is_home_team else away_team['logo'],
@@ -138,8 +144,8 @@ class CEBLSensor(CoordinatorEntity, Entity):
         }
 
     def _determine_state(self, fixture):
-        now = datetime.now(EST)
-        start_date = datetime.fromisoformat(fixture['startDate'].replace('Z', '+00:00')).astimezone(EST)
+        now = datetime.now(pytz.timezone(self.hass.config.time_zone))
+        start_date = datetime.fromisoformat(fixture['startDate'].replace('Z', '+00:00')).astimezone(pytz.timezone(self.hass.config.time_zone))
         if now < start_date:
             return 'PRE'
         elif now > start_date + timedelta(hours=4):
@@ -148,7 +154,7 @@ class CEBLSensor(CoordinatorEntity, Entity):
             return 'IN'
 
     def _get_kickoff_in(self, start_date):
-        now = datetime.now(EST)
+        now = datetime.now(pytz.timezone(self.hass.config.time_zone))
         delta = start_date - now
         days, seconds = delta.days, delta.seconds
         hours = seconds // 3600
