@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, API_URL_LIVE, API_URL_FIXTURES
+from .const import DOMAIN, API_URL_LIVE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -100,7 +100,10 @@ class CEBLSensor(CoordinatorEntity, Entity):
             'venue': fixture.get('stadium', {}).get('name'),
             'team_name': home_team['name'] if is_home_team else away_team['name'],
             'team_logo': home_team['logo'] if is_home_team else away_team['logo'],
+            'opponent_abbr': away_team['name'] if is_home_team else home_team['name'],
+            'opponent_id': away_team['id'] if is_home_team else home_team['id'],
             'opponent_name': away_team['name'] if is_home_team else home_team['name'],
+            'opponent_homeaway': 'away' if is_home_team else 'home',
             'opponent_logo': away_team['logo'] if is_home_team else home_team['logo'],
             'last_update': fixture['updatedAt'],
         }
@@ -147,17 +150,14 @@ class CEBLSensor(CoordinatorEntity, Entity):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(API_URL_LIVE) as response:
-                    _LOGGER.debug(f"Fetching live score data from {API_URL_LIVE}")
                     if response.content_type == "application/javascript":
                         text = await response.text()
                         live_data = json.loads(text)
                     else:
                         live_data = await response.json()
 
-                    _LOGGER.debug(f"Live data: {live_data}")
                     for match in live_data:
                         if match['homename'] == self._attributes.get('team_name') or match['awayname'] == self._attributes.get('team_name'):
-                            _LOGGER.debug(f"Live match found for team: {self._attributes.get('team_name')}")
                             self._attributes.update(self._parse_live_data(match))
                             self._state = self._determine_live_state(match)
                             break
