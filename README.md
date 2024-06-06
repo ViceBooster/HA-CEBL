@@ -56,7 +56,6 @@ The integration creates sensors that provide information about the upcoming fixt
 - Team and opponent logos
 - Score
 - Venue
-- Opponent details
 - Time until kickoff
 - Quarter/Period
 - Period Time left
