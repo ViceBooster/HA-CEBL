@@ -93,8 +93,17 @@ class CEBLSensor(CoordinatorEntity, Entity):
     async def _update_live_score(self, _):
         """Fetch and update live score data."""
         _LOGGER.debug(f"Updating live score for team ID {self._team_id}")
-        await self.coordinator.async_update_live_scores(None)
-        self._update_live_data()
+        if self._is_match_live():
+            await self.coordinator.async_update_live_scores(None)
+            self._update_live_data()
+
+    def _is_match_live(self):
+        live_data = self.coordinator.data.get('live_scores', [])
+        for match in live_data:
+            if match['homename'] == self._attributes.get('team_name') or match['awayname'] == self._attributes.get('team_name'):
+                if match['matchStatus'] == 'IN_PROGRESS':
+                    return True
+        return False
 
     def _update_live_data(self):
         live_data = self.coordinator.data.get('live_scores', [])
@@ -112,8 +121,8 @@ class CEBLSensor(CoordinatorEntity, Entity):
             'match_status': match['matchStatus'],
             'home_team_score': match['homescore'],
             'away_team_score': match['awayscore'],
-            'match_period': match['period'],
-            'match_clock': match['clock'],
+            'match_period': match.get('period', 'Unknown'),
+            'match_clock': match.get('clock', 'Unknown'),
         }
 
     def _determine_live_state(self, match):
