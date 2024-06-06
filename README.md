@@ -1,4 +1,4 @@
-![CEBL Home Assistant Integration](cebl/icon.png)
+![CEBL Home Assistant Integration](cebl/logo.png)
 
 # CEBL Home Assistant Integration
 
