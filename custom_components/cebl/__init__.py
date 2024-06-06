@@ -1,8 +1,8 @@
+from datetime import datetime, timedelta, timezone
 import logging
 import aiohttp
 import async_timeout
 import asyncio
-from datetime import timedelta, datetime
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -82,7 +82,7 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
 
     def _is_fixture_live(self, fixture):
         """Check if a fixture is currently live."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         start_date = datetime.fromisoformat(fixture['startDate'].replace('Z', '+00:00'))
         end_date = datetime.fromisoformat(fixture['endDate'].replace('Z', '+00:00'))
         return start_date <= now <= end_date
