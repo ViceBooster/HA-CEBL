@@ -100,8 +100,8 @@ class CEBLSensor(CoordinatorEntity, Entity):
             'venue': fixture.get('stadium', {}).get('name'),
             'team_name': home_team['name'] if is_home_team else away_team['name'],
             'team_logo': home_team['logo'] if is_home_team else away_team['logo'],
-            'opponent_name': away_team['name'] if is home_team else home_team['name'],
-            'opponent_logo': away_team['logo'] if is home_team else home_team['logo'],
+            'opponent_name': away_team['name'] if is_home_team else home_team['name'],
+            'opponent_logo': away_team['logo'] if is_home_team else home_team['logo'],
             'last_update': fixture['updatedAt'],
         }
 
