@@ -66,8 +66,10 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
                     else:
                         self.update_interval = timedelta(minutes=10)
                     
-                    self._update_interval()
-
+                    # No need to call a function, just let the coordinator handle it
+                    self._unsub_refresh()
+                    self._schedule_refresh()
+                    
                     return {"fixtures": fixtures}
         except aiohttp.ClientError as err:
             _LOGGER.error(f"HTTP error fetching teams: {err}")
@@ -85,8 +87,3 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
         start_date = datetime.fromisoformat(fixture['startDate'].replace('Z', '+00:00'))
         end_date = datetime.fromisoformat(fixture['endDate'].replace('Z', '+00:00'))
         return start_date <= now <= end_date
-
-    def _update_interval(self):
-        """Update the coordinator's refresh interval."""
-        self._unsub_refresh()
-        self._handle_refresh_interval()
