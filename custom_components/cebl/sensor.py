@@ -1,16 +1,14 @@
 import logging
 from datetime import datetime, timedelta
 import pytz
-import aiohttp
-import json
 from homeassistant.helpers.entity import Entity
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import format_mac
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.event import async_track_time_interval
 
-from .const import DOMAIN, API_URL_LIVE
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,7 +18,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     """Set up CEBL sensors from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
     sensors = [
-        CEBLSensor(coordinator, team_id)
+        CEBLSensor(hass, coordinator, team_id)
         for team_id in coordinator.entry.data["teams"]
     ]
 
@@ -32,14 +30,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     async_add_entities(sensors, True)
 
 class CEBLSensor(CoordinatorEntity, Entity):
-    def __init__(self, coordinator: DataUpdateCoordinator, team_id):
+    def __init__(self, hass: HomeAssistant, coordinator: DataUpdateCoordinator, team_id):
         """Initialize the sensor."""
         super().__init__(coordinator)
+        self.hass = hass
         self._team_id = str(team_id)  # Ensure team_id is a string
         self._state = None
         self._attributes = {}
         self._unique_id = format_mac(f"cebl_{self._team_id}")
-        self._update()
+        self._update_state()
+
+        # Schedule the periodic live score updates
+        async_track_time_interval(self.hass, self._update_live_score, timedelta(minutes=1))
 
     @property
     def name(self):
@@ -59,10 +61,11 @@ class CEBLSensor(CoordinatorEntity, Entity):
 
     async def async_update(self):
         """Update the sensor state."""
+        _LOGGER.debug(f"async_update called for team ID {self._team_id}")
         await self.coordinator.async_request_refresh()
-        self._update()
+        self._update_state()
 
-    def _update(self):
+    def _update_state(self):
         data = self.coordinator.data
         _LOGGER.debug(f"Updating sensor for team ID {self._team_id} with data: {data}")
 
@@ -82,9 +85,38 @@ class CEBLSensor(CoordinatorEntity, Entity):
             if not self._state or self._state != 'IN':
                 self._state = 'No upcoming fixture'
 
-        # Fetch and update live score data
-        hass = self.coordinator.hass
-        hass.async_create_task(self._update_live_score())
+    async def _update_live_score(self, _):
+        """Fetch and update live score data."""
+        _LOGGER.debug(f"Updating live score for team ID {self._team_id}")
+        await self.coordinator.async_update_live_scores(None)
+        self._update_live_data()
+
+    def _update_live_data(self):
+        live_data = self.coordinator.data.get('live_scores', [])
+        for match in live_data:
+            if match['homename'] == self._attributes.get('team_name') or match['awayname'] == self._attributes.get('team_name'):
+                _LOGGER.debug(f"Live match found for team: {self._attributes.get('team_name')}")
+                self._attributes.update(self._parse_live_data(match))
+                self._state = self._determine_live_state(match)
+                self.async_write_ha_state()  # Notify Home Assistant of state change
+                break
+
+    def _parse_live_data(self, match):
+        return {
+            'match_status': match['matchStatus'],
+            'home_team_score': match['homescore'],
+            'away_team_score': match['awayscore'],
+            'match_period': match['period'],
+            'match_clock': match['clock'],
+        }
+
+    def _determine_live_state(self, match):
+        if match['matchStatus'] == 'IN_PROGRESS':
+            return 'IN'
+        elif match['matchStatus'] == 'COMPLETE':
+            return 'POST'
+        else:
+            return 'PRE'
 
     def _parse_fixture(self, fixture):
         home_team = fixture['homeTeam']
@@ -144,39 +176,3 @@ class CEBLSensor(CoordinatorEntity, Entity):
                 return f"{hours} hours ago"
             else:
                 return f"{minutes} minutes ago"
-
-    async def _update_live_score(self):
-        """Fetch and update live score data."""
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(API_URL_LIVE) as response:
-                    if response.content_type == "application/javascript":
-                        text = await response.text()
-                        live_data = json.loads(text)
-                    else:
-                        live_data = await response.json()
-
-                    for match in live_data:
-                        if match['homename'] == self._attributes.get('team_name') or match['awayname'] == self._attributes.get('team_name'):
-                            self._attributes.update(self._parse_live_data(match))
-                            self._state = self._determine_live_state(match)
-                            break
-        except aiohttp.ClientError as e:
-            _LOGGER.error(f"Error fetching live score data: {e}")
-
-    def _parse_live_data(self, match):
-        return {
-            'match_status': match['matchStatus'],
-            'home_team_score': match['homescore'],
-            'away_team_score': match['awayscore'],
-            'match_period': match['period'],
-            'match_clock': match['clock'],
-        }
-
-    def _determine_live_state(self, match):
-        if match['matchStatus'] == 'IN_PROGRESS':
-            return 'IN'
-        elif match['matchStatus'] == 'COMPLETE':
-            return 'POST'
-        else:
-            return 'PRE'
