@@ -10,7 +10,7 @@ Welcome to the [CEBL](https://cebl.ca) Home Assistant Integration! This integrat
 
 - Fetch and display upcoming fixtures for selected CEBL teams.
 - Provides details about the fixtures including scores, fixture date, time, venue, opponent, and more.
-- Updates every 10 minutes to ensure you have the latest information, and every 1 minute if a game is live.
+- Updates every 10 minutes to ensure you have the latest information, and every 30 seconds if a game is live.
 
 ## Installation
 
