@@ -6,7 +6,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Coor
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import format_mac
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_track_time_change, async_track_time_interval
 
 from .const import DOMAIN
 
@@ -39,6 +39,9 @@ class CEBLSensor(CoordinatorEntity, Entity):
 
         # Schedule the periodic live score updates
         async_track_time_interval(self.hass, self._update_live_score, timedelta(seconds=30))
+
+        # Schedule the daily fixture update at 12 AM
+        async_track_time_change(self.hass, self._update_daily_fixtures, hour=0, minute=0, second=0)
 
     @property
     def name(self):
@@ -132,6 +135,12 @@ class CEBLSensor(CoordinatorEntity, Entity):
             return 'POST'
         else:
             return 'PRE'
+
+    async def _update_daily_fixtures(self, _):
+        """Check daily for upcoming fixtures and update the entity."""
+        _LOGGER.debug(f"Checking for upcoming fixtures daily for team ID {self._team_id}")
+        await self.coordinator.async_request_refresh()
+        self._update_state()
 
     def _parse_fixture(self, fixture):
         home_team = fixture['homeTeam']
