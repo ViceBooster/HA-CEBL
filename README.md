@@ -69,8 +69,9 @@ You can use these sensors in your Home Assistant dashboard, automations, and scr
   - Check the Home Assistant logs for any error messages.
 
 - **Data Not Updating:**
-  - The data updates every 10 minutes (30 seconds if live). Ensure you wait for this interval.
-  - Check your internet connection.
+  - The inital data should populate shortly after a team is selected and added, updates after are every 10 minutes (30 seconds if live).
+  - Fixture data is updated daily at midnight (12AM) based on your HA timezone configuration.
+  - Check your internet connection, this depends on the cloud.
 
 ## Contributing
 
