@@ -85,7 +85,7 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
                         return  # No exception raising here, just return
 
                     # Explicitly decode the response as JSON
-                    live_data = await response.json(content_type='application/javascript')
+                    live_data = await response.json()
                     _LOGGER.debug(f"Fetched live data: {live_data}")
                     self.data.update({"live_scores": live_data})
                     self.async_set_updated_data(self.data)
