@@ -1,5 +1,6 @@
 import logging
 import aiohttp
+import asyncio
 import async_timeout
 from datetime import timedelta
 from homeassistant.config_entries import ConfigEntry
@@ -79,20 +80,29 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.info("Fetching live CEBL scores from API.")
         try:
             async with async_timeout.timeout(10):
-                async with self.session.get(self.url_live) as response:
+                headers = {
+                    'Accept': 'application/json'  # Explicitly request JSON response
+                }
+                async with self.session.get(self.url_live, headers=headers) as response:
                     if response.status != 200:
                         _LOGGER.error(f"Invalid response from API: {response.status}")
-                        return  # No exception raising here, just return
+                        return
 
-                    # Explicitly decode the response as JSON
-                    live_data = await response.json()
-                    _LOGGER.debug(f"Fetched live data: {live_data}")
-                    self.data.update({"live_scores": live_data})
-                    self.async_set_updated_data(self.data)
+                    # Read the raw text first
+                    text_data = await response.text()
+                    
+                    try:
+                        # Try to parse it as JSON regardless of content type
+                        import json
+                        live_data = json.loads(text_data)
+                        _LOGGER.debug(f"Fetched live data: {live_data}")
+                        self.data.update({"live_scores": live_data})
+                        self.async_set_updated_data(self.data)
+                    except json.JSONDecodeError as err:
+                        _LOGGER.error(f"Failed to parse JSON response: {err}")
+                        
         except aiohttp.ClientError as err:
             _LOGGER.error(f"HTTP error fetching live scores: {err}")
-        except aiohttp.ContentTypeError as err:
-            _LOGGER.error(f"Content type error fetching live scores: {err}")
         except asyncio.TimeoutError:
             _LOGGER.error("Timeout error fetching live scores")
         except Exception as err:
