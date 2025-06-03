@@ -83,6 +83,31 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
         except (ValueError, TypeError) as e:
             _LOGGER.debug(f"Could not calculate hours since game: {e}")
         return None
+    
+    def _calculate_time_until_game(self, start_time_utc):
+        """Calculate user-friendly time until game starts."""
+        if not start_time_utc:
+            return None
+        try:
+            parsed_time = dt.parse_datetime(start_time_utc)
+            if parsed_time:
+                start_time_local = dt.as_local(parsed_time)
+                now = dt.now()
+                if now < start_time_local:
+                    delta = start_time_local - now
+                    if delta.days > 0:
+                        return f"In {delta.days} days"
+                    elif delta.seconds > 3600:
+                        hours = delta.seconds // 3600
+                        return f"In {hours} hours"
+                    else:
+                        minutes = delta.seconds // 60
+                        return f"In {minutes} minutes"
+                else:
+                    return "Starting soon"
+        except (ValueError, TypeError) as e:
+            _LOGGER.debug(f"Could not calculate time until game: {e}")
+        return None
 
     def _get_team_fixture(self):
         """Get the most relevant fixture for this team (live > upcoming > recent)."""
@@ -271,9 +296,7 @@ class CEBLGameSensor(CEBLBaseSensor):
         # Enhanced game state logic
         if clock == '00:00' and period >= 4:
             # Game is over
-            team_score = live_data.get('team1_score' if is_home_team else 'team2_score', 0)
-            opponent_score = live_data.get('team2_score' if is_home_team else 'team1_score', 0)
-            self._state = f"{team_score}-{opponent_score} FINAL"
+            self._state = "POST"
         elif period > 0 and (clock != '00:00' or period >= 1):
             # Game is in progress
             self._state = "IN"
@@ -308,6 +331,8 @@ class CEBLGameSensor(CEBLBaseSensor):
             "is_live": period > 0 and clock != '00:00',
             "is_final": clock == '00:00' and period >= 4,
             "score_difference": abs(live_data.get('team1_score', 0) - live_data.get('team2_score', 0)),
+            # Detailed score information for POST games
+            "final_score": f"{live_data.get('team1_score' if is_home_team else 'team2_score', 0)}-{live_data.get('team2_score' if is_home_team else 'team1_score', 0)}" if self._state == "POST" else None,
             # Transition timing info
             "hours_since_game": None,  # Not applicable for live games
             "showing_completed_game": False
@@ -327,36 +352,9 @@ class CEBLGameSensor(CEBLBaseSensor):
         if game_status in ['LIVE', 'IN_PROGRESS', 'HALFTIME', 'QUARTER_BREAK']:
             self._state = "IN"  # Live game in progress
         elif game_status in ['COMPLETE', 'COMPLETED', 'FINAL']:
-            # Show final score for completed games
-            team_score = self._safe_score(home_team.get('score')) if is_home_team else self._safe_score(away_team.get('score'))
-            opponent_score = self._safe_score(away_team.get('score')) if is_home_team else self._safe_score(home_team.get('score'))
-            self._state = f"{team_score}-{opponent_score} FINAL"
-        elif start_time_utc:
-            start_time_local = dt.as_local(start_time_utc)
-            now = dt.now()
-            
-            if now < start_time_local:
-                # Upcoming game - check if it's within pre-game window (2 hours)
-                delta = start_time_local - now
-                if delta.total_seconds() <= 7200:  # 2 hours = 7200 seconds
-                    self._state = "PRE"  # Pre-game state for games starting soon
-                elif delta.days > 0:
-                    self._state = f"In {delta.days} days"
-                elif delta.seconds > 3600:
-                    hours = delta.seconds // 3600
-                    self._state = f"In {hours} hours"
-                else:
-                    minutes = delta.seconds // 60
-                    self._state = f"In {minutes} minutes"
-            else:
-                # Game time has passed but no live data - might be starting soon
-                time_since_start = now - start_time_local
-                if time_since_start.total_seconds() <= 3600:  # Within 1 hour of start
-                    self._state = "PRE"  # Game should be starting soon
-                else:
-                    self._state = fixture.get('status', 'Scheduled')
+            self._state = "POST"  # Completed game
         else:
-            self._state = fixture.get('status', 'Scheduled')
+            self._state = "PRE"  # Scheduled/upcoming game
         
         self._attributes = {
             "team_id": self._team_id,
@@ -380,6 +378,10 @@ class CEBLGameSensor(CEBLBaseSensor):
             "is_upcoming": start_time_utc and dt.now() < dt.as_local(start_time_utc) if start_time_utc else False,
             "score_difference": abs(self._safe_score(home_team.get('score') if is_home_team else away_team.get('score')) - 
                                    self._safe_score(away_team.get('score') if is_home_team else home_team.get('score'))),
+            # Detailed score information for POST games
+            "final_score": f"{self._safe_score(home_team.get('score')) if is_home_team else self._safe_score(away_team.get('score'))}-{self._safe_score(away_team.get('score')) if is_home_team else self._safe_score(home_team.get('score'))}" if self._state == "POST" else None,
+            # Time until game (for PRE state)
+            "time_until_game": self._calculate_time_until_game(start_time_utc) if self._state == "PRE" else None,
             # Transition timing info
             "hours_since_game": self._calculate_hours_since_game(start_time_utc, game_status),
             "showing_completed_game": game_status in ['COMPLETE', 'COMPLETED', 'FINAL']
