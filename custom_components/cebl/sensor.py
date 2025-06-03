@@ -64,15 +64,114 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
         pass
 
     def _get_team_fixture(self):
-        """Get the fixture for this team."""
+        """Get the most relevant fixture for this team (live > upcoming > recent)."""
         data = self.coordinator.data
-        for fixture in data.get('fixtures', []):
+        fixtures = data.get('fixtures', [])
+        
+        # Find all fixtures for this team
+        team_fixtures = []
+        for fixture in fixtures:
             home_team_id = str(fixture['homeTeam']['id'])
             away_team_id = str(fixture['awayTeam']['id'])
             
             if home_team_id == self._team_id or away_team_id == self._team_id:
-                return fixture
-        return None
+                team_fixtures.append(fixture)
+        
+        if not team_fixtures:
+            return None
+        
+        # Sort fixtures by priority: live > upcoming > recent
+        from datetime import datetime
+        import pytz
+        
+        now = datetime.now(pytz.UTC)
+        live_games = []
+        upcoming_games = []
+        completed_games = []
+        
+        for fixture in team_fixtures:
+            status = fixture.get('status', '').upper()
+            start_time_str = fixture.get('start_time_utc', '')
+            
+            # Parse start time
+            start_time = None
+            if start_time_str:
+                try:
+                    # Handle different datetime formats
+                    if 'T' in start_time_str:
+                        if start_time_str.endswith('Z'):
+                            start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+                        else:
+                            start_time = datetime.fromisoformat(start_time_str)
+                            if start_time.tzinfo is None:
+                                start_time = start_time.replace(tzinfo=pytz.UTC)
+                except ValueError:
+                    _LOGGER.debug(f"Could not parse start time: {start_time_str}")
+            
+            # Categorize games
+            if status in ['LIVE', 'IN_PROGRESS', 'HALFTIME', 'QUARTER_BREAK']:
+                live_games.append(fixture)
+            elif status in ['COMPLETE', 'COMPLETED', 'FINAL']:
+                completed_games.append((fixture, start_time))
+            elif start_time and now < start_time:
+                upcoming_games.append((fixture, start_time))
+            else:
+                completed_games.append((fixture, start_time))
+        
+        # Return highest priority game available with smart transition logic
+        if live_games:
+            _LOGGER.debug(f"Found {len(live_games)} live games, returning first")
+            return live_games[0]
+        
+        # Smart transition logic between completed and upcoming games
+        if upcoming_games and completed_games:
+            # Sort both lists
+            upcoming_games.sort(key=lambda x: x[1] if x[1] else datetime.max.replace(tzinfo=pytz.UTC))
+            completed_games.sort(key=lambda x: x[1] if x[1] else datetime.min.replace(tzinfo=pytz.UTC), reverse=True)
+            
+            next_game = upcoming_games[0]
+            recent_game = completed_games[0]
+            
+            next_game_time = next_game[1]
+            recent_game_time = recent_game[1]
+            
+            if next_game_time and recent_game_time:
+                time_until_next = (next_game_time - now).total_seconds()
+                time_since_last = (now - recent_game_time).total_seconds()
+                
+                # Transition rules:
+                # 1. If next game is within 48 hours (172800 seconds), prioritize it
+                # 2. If recent game ended more than 12 hours ago (43200 seconds) AND next game is within 7 days, show upcoming
+                # 3. Otherwise show recent game for up to 12 hours
+                
+                if time_until_next <= 172800:  # Next game within 48 hours
+                    _LOGGER.debug(f"Next game within 48 hours ({time_until_next/3600:.1f}h), showing upcoming game")
+                    return next_game[0]
+                elif time_since_last > 43200 and time_until_next <= 604800:  # Recent game >12h old AND next game within 7 days
+                    _LOGGER.debug(f"Recent game >12h old ({time_since_last/3600:.1f}h), next game within 7 days ({time_until_next/86400:.1f}d), showing upcoming game")
+                    return next_game[0]
+                else:
+                    _LOGGER.debug(f"Showing recent game (ended {time_since_last/3600:.1f}h ago, next game in {time_until_next/86400:.1f}d)")
+                    return recent_game[0]
+            else:
+                # Fallback to upcoming if times couldn't be parsed
+                return next_game[0]
+        
+        if upcoming_games:
+            # Sort upcoming games by start time (earliest first)
+            upcoming_games.sort(key=lambda x: x[1] if x[1] else datetime.max.replace(tzinfo=pytz.UTC))
+            _LOGGER.debug(f"Found {len(upcoming_games)} upcoming games, returning earliest")
+            return upcoming_games[0][0]
+        
+        if completed_games:
+            # Sort completed games by start time (most recent first)
+            completed_games.sort(key=lambda x: x[1] if x[1] else datetime.min.replace(tzinfo=pytz.UTC), reverse=True)
+            _LOGGER.debug(f"Found {len(completed_games)} completed games, returning most recent")
+            return completed_games[0][0]
+        
+        # Fallback to first game
+        _LOGGER.debug("No categorized games found, returning first fixture")
+        return team_fixtures[0]
 
     def _get_team_live_data(self):
         """Get live data for this team."""
@@ -144,16 +243,22 @@ class CEBLGameSensor(CEBLBaseSensor):
         away_team = fixture['awayTeam']
         is_home_team = str(home_team['id']) == self._team_id
         
-        # Determine game status
+        # Determine game status from live data
         clock = live_data.get('clock', '00:00')
         period = live_data.get('period', 0)
         
+        # Enhanced game state logic
         if clock == '00:00' and period >= 4:
-            self._state = "Final"
-        elif clock != '00:00' or period > 0:
-            self._state = f"Period {period} - {clock}"
+            # Game is over
+            team_score = live_data.get('team1_score' if is_home_team else 'team2_score', 0)
+            opponent_score = live_data.get('team2_score' if is_home_team else 'team1_score', 0)
+            self._state = f"{team_score}-{opponent_score} FINAL"
+        elif period > 0 and (clock != '00:00' or period >= 1):
+            # Game is in progress
+            self._state = "IN"
         else:
-            self._state = "Pre-Game"
+            # Pre-game or game about to start
+            self._state = "PRE"
         
         # Build comprehensive attributes
         self._attributes = {
@@ -176,7 +281,15 @@ class CEBLGameSensor(CEBLBaseSensor):
             "competition": fixture.get('competition', ''),
             "status": fixture.get('status', ''),
             "stats_url": fixture.get('stats_url', ''),
-            "cebl_stats_url": fixture.get('cebl_stats_url', '')
+            "cebl_stats_url": fixture.get('cebl_stats_url', ''),
+            # Enhanced status tracking
+            "game_status": self._state,
+            "is_live": period > 0 and clock != '00:00',
+            "is_final": clock == '00:00' and period >= 4,
+            "score_difference": abs(live_data.get('team1_score', 0) - live_data.get('team2_score', 0)),
+            # Transition timing info
+            "hours_since_game": None,  # Not applicable for live games
+            "showing_completed_game": False
         }
 
     def _update_fixture_state(self, fixture):
@@ -187,13 +300,26 @@ class CEBLGameSensor(CEBLBaseSensor):
         
         # Parse start time
         start_time_utc = dt.parse_datetime(fixture.get('start_time_utc', ''))
-        if start_time_utc:
+        game_status = fixture.get('status', '').upper()
+        
+        # Determine proper state based on game status and time
+        if game_status in ['LIVE', 'IN_PROGRESS', 'HALFTIME', 'QUARTER_BREAK']:
+            self._state = "IN"  # Live game in progress
+        elif game_status in ['COMPLETE', 'COMPLETED', 'FINAL']:
+            # Show final score for completed games
+            team_score = home_team.get('score', 0) if is_home_team else away_team.get('score', 0)
+            opponent_score = away_team.get('score', 0) if is_home_team else home_team.get('score', 0)
+            self._state = f"{team_score}-{opponent_score} FINAL"
+        elif start_time_utc:
             start_time_local = dt.as_local(start_time_utc)
             now = dt.now()
             
             if now < start_time_local:
+                # Upcoming game - check if it's within pre-game window (2 hours)
                 delta = start_time_local - now
-                if delta.days > 0:
+                if delta.total_seconds() <= 7200:  # 2 hours = 7200 seconds
+                    self._state = "PRE"  # Pre-game state for games starting soon
+                elif delta.days > 0:
                     self._state = f"In {delta.days} days"
                 elif delta.seconds > 3600:
                     hours = delta.seconds // 3600
@@ -202,7 +328,12 @@ class CEBLGameSensor(CEBLBaseSensor):
                     minutes = delta.seconds // 60
                     self._state = f"In {minutes} minutes"
             else:
-                self._state = fixture.get('status', 'Scheduled')
+                # Game time has passed but no live data - might be starting soon
+                time_since_start = now - start_time_local
+                if time_since_start.total_seconds() <= 3600:  # Within 1 hour of start
+                    self._state = "PRE"  # Game should be starting soon
+                else:
+                    self._state = fixture.get('status', 'Scheduled')
         else:
             self._state = fixture.get('status', 'Scheduled')
         
@@ -220,7 +351,17 @@ class CEBLGameSensor(CEBLBaseSensor):
             "competition": fixture.get('competition', ''),
             "status": fixture.get('status', ''),
             "stats_url": fixture.get('stats_url', ''),
-            "cebl_stats_url": fixture.get('cebl_stats_url', '')
+            "cebl_stats_url": fixture.get('cebl_stats_url', ''),
+            # Enhanced status tracking
+            "game_status": self._state,
+            "is_live": game_status in ['LIVE', 'IN_PROGRESS', 'HALFTIME', 'QUARTER_BREAK'],
+            "is_final": game_status in ['COMPLETE', 'COMPLETED', 'FINAL'],
+            "is_upcoming": start_time_utc and dt.now() < dt.as_local(start_time_utc) if start_time_utc else False,
+            "score_difference": abs((home_team.get('score', 0) if is_home_team else away_team.get('score', 0)) - 
+                                   (away_team.get('score', 0) if is_home_team else home_team.get('score', 0))),
+            # Transition timing info
+            "hours_since_game": (dt.now() - dt.as_local(start_time_utc)).total_seconds() / 3600 if start_time_utc and game_status in ['COMPLETE', 'COMPLETED', 'FINAL'] else None,
+            "showing_completed_game": game_status in ['COMPLETE', 'COMPLETED', 'FINAL']
         }
 
 class CEBLTeamStatsSensor(CEBLBaseSensor):
