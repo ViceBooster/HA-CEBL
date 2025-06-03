@@ -43,7 +43,7 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
         self.url_live_base = API_URL_LIVE_BASE
         self.headers = API_HEADERS
         self.teams = entry.data.get("teams", [])
-        self.competition_ids = {}  # Store competition IDs for live scores
+        self.match_ids = {}  # Store match IDs for live scores
         _LOGGER.info(f"Initializing CEBLDataUpdateCoordinator with teams: {self.teams}")
         super().__init__(
             hass,
@@ -97,15 +97,15 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
                             }
                             fixtures.append(fixture)
                             
-                            # Extract competition ID from stats URL for live scores
+                            # Extract match ID from stats URL for live scores
                             stats_url = game.get("stats_url_en", "")
                             if "/u/CEBL/" in stats_url:
                                 try:
-                                    competition_id = stats_url.split("/u/CEBL/")[1].split("/")[0]
-                                    self.competition_ids[game.get("id")] = competition_id
-                                    _LOGGER.debug(f"Extracted competition ID {competition_id} for game {game.get('id')}")
+                                    match_id = stats_url.split("/u/CEBL/")[1].split("/")[0]
+                                    self.match_ids[game.get("id")] = match_id
+                                    _LOGGER.debug(f"Extracted match ID {match_id} for game {game.get('id')}")
                                 except (IndexError, AttributeError):
-                                    _LOGGER.warning(f"Could not extract competition ID from {stats_url}")
+                                    _LOGGER.warning(f"Could not extract match ID from {stats_url}")
                     
                     _LOGGER.info(f"Filtered {len(fixtures)} fixtures for selected teams")
                     return {"fixtures": fixtures}
@@ -121,18 +121,19 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"Unexpected error fetching games: {err}")
 
     async def async_update_live_scores(self, _):
-        """Fetch live score data from the API using competition IDs."""
+        """Fetch live score data from the API using match IDs."""
         _LOGGER.info("Fetching live CEBL scores from API.")
         
-        if not self.competition_ids:
-            _LOGGER.debug("No competition IDs available for live score updates")
+        if not self.match_ids:
+            _LOGGER.debug("No match IDs available for live score updates")
             return
             
         live_scores_data = {}
         
-        for game_id, competition_id in self.competition_ids.items():
+        for game_id, match_id in self.match_ids.items():
             try:
-                live_url = f"{self.url_live_base}{competition_id}.json"
+                # Use the new URL pattern: /data/[MATCH_ID]/data.json
+                live_url = f"https://fibalivestats.dcd.shared.geniussports.com/data/{match_id}/data.json"
                 async with async_timeout.timeout(10):
                     # Use minimal headers for live scores API
                     live_headers = {
@@ -141,31 +142,160 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
                     }
                     async with self.session.get(live_url, headers=live_headers) as response:
                         if response.status != 200:
-                            _LOGGER.debug(f"No live data for competition {competition_id}: {response.status}")
+                            _LOGGER.debug(f"No live data for match {match_id}: {response.status}")
                             continue
 
-                        live_data = await response.json()
-                        if live_data and len(live_data) > 0:
-                            match_data = live_data[0]  # API returns array with single match
+                        # Force JSON parsing even if content-type is wrong
+                        text_data = await response.text()
+                        try:
+                            import json
+                            live_data = json.loads(text_data)
+                        except json.JSONDecodeError as err:
+                            _LOGGER.debug(f"JSON decode error for match {match_id}: {err}")
+                            continue
+
+                        if live_data:
+                            # Extract comprehensive team information
+                            tm1 = live_data.get('tm', {}).get('1', {})
+                            tm2 = live_data.get('tm', {}).get('2', {})
+                            
+                            # Extract top scorers
+                            top_scorers = live_data.get('sPoints', {})
+                            top_scorer_list = []
+                            for key, player in list(top_scorers.items())[:5]:
+                                top_scorer_list.append({
+                                    "name": player.get('name', ''),
+                                    "points": player.get('tot', 0),
+                                    "team": player.get('tno', 0),
+                                    "jersey": player.get('shirtNumber', ''),
+                                    "photo": player.get('photoS', '')
+                                })
+                            
+                            # Extract player details for both teams
+                            team1_players = []
+                            team2_players = []
+                            
+                            for team_num, player_list in [('1', team1_players), ('2', team2_players)]:
+                                team = live_data.get('tm', {}).get(team_num, {})
+                                players = team.get('pl', {})
+                                
+                                for player_id, player in players.items():
+                                    if player.get('sMinutes', '0:00') != '0:00':  # Only players who played
+                                        player_list.append({
+                                            "id": player_id,
+                                            "name": player.get('name', ''),
+                                            "jersey": player.get('shirtNumber', ''),
+                                            "position": player.get('playingPosition', ''),
+                                            "minutes": player.get('sMinutes', '0:00'),
+                                            "points": player.get('sPoints', 0),
+                                            "rebounds": player.get('sReboundsTotal', 0),
+                                            "assists": player.get('sAssists', 0),
+                                            "plus_minus": player.get('sPlusMinusPoints', 0),
+                                            "fg_percentage": player.get('sFieldGoalsPercentage', 0),
+                                            "three_point_percentage": player.get('sThreePointersPercentage', 0),
+                                            "photo": player.get('photoS', ''),
+                                            "starter": player.get('starter', 0),
+                                            "captain": player.get('captain', 0)
+                                        })
+                            
+                            # Extract officials
+                            officials = live_data.get('officials', {})
+                            official_list = []
+                            for ref_key, ref in officials.items():
+                                official_list.append(ref.get('name', ''))
+                            
+                            # Extract other games (league scoreboard)
+                            other_games = live_data.get('othermatches', [])
+                            league_games = []
+                            for game in other_games[:10]:  # Limit to 10 other games
+                                league_games.append({
+                                    "id": game.get('id', ''),
+                                    "team1_name": game.get('team1Name', ''),
+                                    "team2_name": game.get('team2Name', ''),
+                                    "team1_score": game.get('team1Score', 0),
+                                    "team2_score": game.get('team2Score', 0),
+                                    "period": game.get('period', 0),
+                                    "clock": game.get('clock', '00:00'),
+                                    "team1_logo": game.get('team1', {}).get('logoS', {}).get('url', ''),
+                                    "team2_logo": game.get('team2', {}).get('logoS', {}).get('url', '')
+                                })
+                            
                             live_scores_data[game_id] = {
-                                "matchStatus": match_data.get("matchStatus", ""),
-                                "live": match_data.get("live", 0),
-                                "homeScore": match_data.get("homescore", ""),
-                                "awayScore": match_data.get("awayscore", ""),
-                                "matchId": match_data.get("matchId", ""),
-                                "homeName": match_data.get("homename", ""),
-                                "awayName": match_data.get("awayname", ""),
-                                "homeLogo": match_data.get("homelogo", ""),
-                                "awayLogo": match_data.get("awaylogo", "")
+                                # Basic game info
+                                "team1_name": tm1.get('name', ''),
+                                "team2_name": tm2.get('name', ''),
+                                "team1_code": tm1.get('code', ''),
+                                "team2_code": tm2.get('code', ''),
+                                "team1_score": tm1.get('score', 0),
+                                "team2_score": tm2.get('score', 0),
+                                "clock": live_data.get('clock', '00:00'),
+                                "period": live_data.get('period', 0),
+                                "period_type": live_data.get('periodType', ''),
+                                "period_length": live_data.get('periodLength', 10),
+                                "in_ot": live_data.get('inOT', 0),
+                                "match_id": match_id,
+                                
+                                # Visual assets
+                                "team1_logo": tm1.get('logoS', {}).get('url', ''),
+                                "team2_logo": tm2.get('logoS', {}).get('url', ''),
+                                
+                                # Team statistics
+                                "team1_stats": {
+                                    "field_goal_percentage": tm1.get('tot_sFieldGoalsPercentage', 0),
+                                    "three_point_percentage": tm1.get('tot_sThreePointersPercentage', 0),
+                                    "free_throw_percentage": tm1.get('tot_sFreeThrowsPercentage', 0),
+                                    "rebounds": tm1.get('tot_sReboundsTotal', 0),
+                                    "assists": tm1.get('tot_sAssists', 0),
+                                    "turnovers": tm1.get('tot_sTurnovers', 0),
+                                    "steals": tm1.get('tot_sSteals', 0),
+                                    "blocks": tm1.get('tot_sBlocks', 0),
+                                    "bench_points": tm1.get('tot_sBenchPoints', 0),
+                                    "points_in_paint": tm1.get('tot_sPointsInThePaint', 0),
+                                    "points_from_turnovers": tm1.get('tot_sPointsFromTurnovers', 0),
+                                    "fast_break_points": tm1.get('tot_sPointsFastBreak', 0),
+                                    "biggest_lead": tm1.get('tot_sBiggestLead', 0),
+                                    "time_leading": tm1.get('tot_sTimeLeading', 0)
+                                },
+                                "team2_stats": {
+                                    "field_goal_percentage": tm2.get('tot_sFieldGoalsPercentage', 0),
+                                    "three_point_percentage": tm2.get('tot_sThreePointersPercentage', 0),
+                                    "free_throw_percentage": tm2.get('tot_sFreeThrowsPercentage', 0),
+                                    "rebounds": tm2.get('tot_sReboundsTotal', 0),
+                                    "assists": tm2.get('tot_sAssists', 0),
+                                    "turnovers": tm2.get('tot_sTurnovers', 0),
+                                    "steals": tm2.get('tot_sSteals', 0),
+                                    "blocks": tm2.get('tot_sBlocks', 0),
+                                    "bench_points": tm2.get('tot_sBenchPoints', 0),
+                                    "points_in_paint": tm2.get('tot_sPointsInThePaint', 0),
+                                    "points_from_turnovers": tm2.get('tot_sPointsFromTurnovers', 0),
+                                    "fast_break_points": tm2.get('tot_sPointsFastBreak', 0),
+                                    "biggest_lead": tm2.get('tot_sBiggestLead', 0),
+                                    "time_leading": tm2.get('tot_sTimeLeading', 0)
+                                },
+                                
+                                # Player information
+                                "team1_players": team1_players,
+                                "team2_players": team2_players,
+                                "top_scorers": top_scorer_list,
+                                
+                                # Game officials
+                                "officials": official_list,
+                                
+                                # League scoreboard
+                                "other_games": league_games,
+                                
+                                # Coaching staff
+                                "team1_coach": tm1.get('coach', ''),
+                                "team2_coach": tm2.get('coach', '')
                             }
-                            _LOGGER.debug(f"Updated live scores for game {game_id}: {live_scores_data[game_id]}")
+                            _LOGGER.debug(f"Updated comprehensive live data for game {game_id}: {tm1.get('name', 'Team1')} {tm1.get('score', 0)}-{tm2.get('score', 0)} {tm2.get('name', 'Team2')}")
                         
             except aiohttp.ClientError as err:
-                _LOGGER.debug(f"HTTP error fetching live scores for competition {competition_id}: {err}")
+                _LOGGER.debug(f"HTTP error fetching live scores for match {match_id}: {err}")
             except asyncio.TimeoutError:
-                _LOGGER.debug(f"Timeout error fetching live scores for competition {competition_id}")
+                _LOGGER.debug(f"Timeout error fetching live scores for match {match_id}")
             except Exception as err:
-                _LOGGER.debug(f"Error fetching live scores for competition {competition_id}: {err}")
+                _LOGGER.debug(f"Error fetching live scores for match {match_id}: {err}")
         
         if live_scores_data:
             # Update the coordinator data with live scores

@@ -1,6 +1,14 @@
 # Todo list - internal development tracking
 todolist.md
 
+# Development test scripts
+test_cebl_api.py
+test_enhanced_data.py
+test_requirements.txt
+
+# Release notes
+RELEASE_NOTES_*.md
+
 # Python
 __pycache__/
 *.py[cod]
