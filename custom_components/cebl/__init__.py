@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.event import async_track_time_interval
-from .const import DOMAIN, API_URL_FIXTURES, API_URL_LIVE, PLATFORMS, STARTUP_MESSAGE
+from .const import DOMAIN, API_URL_FIXTURES, API_URL_LIVE_BASE, API_HEADERS, PLATFORMS, STARTUP_MESSAGE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,8 +40,10 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
         self.entry = entry
         self.session = async_get_clientsession(hass)
         self.url_fixtures = API_URL_FIXTURES
-        self.url_live = API_URL_LIVE
+        self.url_live_base = API_URL_LIVE_BASE
+        self.headers = API_HEADERS
         self.teams = entry.data.get("teams", [])
+        self.competition_ids = {}  # Store competition IDs for live scores
         _LOGGER.info(f"Initializing CEBLDataUpdateCoordinator with teams: {self.teams}")
         super().__init__(
             hass,
@@ -55,55 +57,119 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.info("Fetching CEBL data from API.")
         try:
             async with async_timeout.timeout(10):
-                async with self.session.get(self.url_fixtures) as response:
+                async with self.session.get(self.url_fixtures, headers=self.headers) as response:
                     if response.status != 200:
                         _LOGGER.error(f"Invalid response from API: {response.status}")
                         raise UpdateFailed(f"Invalid response from API: {response.status}")
-                    data = await response.json()
-                    _LOGGER.debug(f"Fetched data: {data}")
-                    fixtures = [fixture for fixture in data["fixtures"] 
-                                if str(fixture["homeTeam"]["id"]) in self.teams or str(fixture["awayTeam"]["id"]) in self.teams]
-                    _LOGGER.info(f"Fetched fixtures: {fixtures}")
+                    
+                    games = await response.json()
+                    _LOGGER.debug(f"Fetched raw games data: {games}")
+                    
+                    # Filter games for selected teams and convert to expected format
+                    fixtures = []
+                    for game in games:
+                        home_team_id = str(game.get("home_team_id", ""))
+                        away_team_id = str(game.get("away_team_id", ""))
+                        
+                        if home_team_id in self.teams or away_team_id in self.teams:
+                            # Convert to expected fixture format
+                            fixture = {
+                                "id": game.get("id"),
+                                "homeTeam": {
+                                    "id": home_team_id,
+                                    "name": game.get("home_team_name", ""),
+                                    "logo": game.get("home_team_logo_url", ""),
+                                    "score": game.get("home_team_score", 0)
+                                },
+                                "awayTeam": {
+                                    "id": away_team_id,
+                                    "name": game.get("away_team_name", ""),
+                                    "logo": game.get("away_team_logo_url", ""),
+                                    "score": game.get("away_team_score", 0)
+                                },
+                                "status": game.get("status", ""),
+                                "competition": game.get("competition", ""),
+                                "venue_name": game.get("venue_name", ""),
+                                "period": game.get("period", 0),
+                                "start_time_utc": game.get("start_time_utc", ""),
+                                "stats_url": game.get("stats_url_en", ""),
+                                "cebl_stats_url": game.get("cebl_stats_url_en", "")
+                            }
+                            fixtures.append(fixture)
+                            
+                            # Extract competition ID from stats URL for live scores
+                            stats_url = game.get("stats_url_en", "")
+                            if "/u/CEBL/" in stats_url:
+                                try:
+                                    competition_id = stats_url.split("/u/CEBL/")[1].split("/")[0]
+                                    self.competition_ids[game.get("id")] = competition_id
+                                    _LOGGER.debug(f"Extracted competition ID {competition_id} for game {game.get('id')}")
+                                except (IndexError, AttributeError):
+                                    _LOGGER.warning(f"Could not extract competition ID from {stats_url}")
+                    
+                    _LOGGER.info(f"Filtered {len(fixtures)} fixtures for selected teams")
                     return {"fixtures": fixtures}
+                    
         except aiohttp.ClientError as err:
-            _LOGGER.error(f"HTTP error fetching teams: {err}")
-            raise UpdateFailed(f"HTTP error fetching teams: {err}")
+            _LOGGER.error(f"HTTP error fetching games: {err}")
+            raise UpdateFailed(f"HTTP error fetching games: {err}")
         except asyncio.TimeoutError:
-            _LOGGER.error("Timeout error fetching teams")
-            raise UpdateFailed("Timeout error fetching teams")
+            _LOGGER.error("Timeout error fetching games")
+            raise UpdateFailed("Timeout error fetching games")
         except Exception as err:
-            _LOGGER.error(f"Unexpected error fetching teams: {err}")
-            raise UpdateFailed(f"Unexpected error fetching teams: {err}")
+            _LOGGER.error(f"Unexpected error fetching games: {err}")
+            raise UpdateFailed(f"Unexpected error fetching games: {err}")
 
     async def async_update_live_scores(self, _):
-        """Fetch live score data from the API."""
+        """Fetch live score data from the API using competition IDs."""
         _LOGGER.info("Fetching live CEBL scores from API.")
-        try:
-            async with async_timeout.timeout(10):
-                headers = {
-                    'Accept': 'application/json'  # Explicitly request JSON response
-                }
-                async with self.session.get(self.url_live, headers=headers) as response:
-                    if response.status != 200:
-                        _LOGGER.error(f"Invalid response from API: {response.status}")
-                        return
+        
+        if not self.competition_ids:
+            _LOGGER.debug("No competition IDs available for live score updates")
+            return
+            
+        live_scores_data = {}
+        
+        for game_id, competition_id in self.competition_ids.items():
+            try:
+                live_url = f"{self.url_live_base}{competition_id}.json"
+                async with async_timeout.timeout(10):
+                    # Use minimal headers for live scores API
+                    live_headers = {
+                        'Accept': 'application/json',
+                        'User-Agent': self.headers['User-Agent']
+                    }
+                    async with self.session.get(live_url, headers=live_headers) as response:
+                        if response.status != 200:
+                            _LOGGER.debug(f"No live data for competition {competition_id}: {response.status}")
+                            continue
 
-                    # Read the raw text first
-                    text_data = await response.text()
-                    
-                    try:
-                        # Try to parse it as JSON regardless of content type
-                        import json
-                        live_data = json.loads(text_data)
-                        _LOGGER.debug(f"Fetched live data: {live_data}")
-                        self.data.update({"live_scores": live_data})
-                        self.async_set_updated_data(self.data)
-                    except json.JSONDecodeError as err:
-                        _LOGGER.error(f"Failed to parse JSON response: {err}")
+                        live_data = await response.json()
+                        if live_data and len(live_data) > 0:
+                            match_data = live_data[0]  # API returns array with single match
+                            live_scores_data[game_id] = {
+                                "matchStatus": match_data.get("matchStatus", ""),
+                                "live": match_data.get("live", 0),
+                                "homeScore": match_data.get("homescore", ""),
+                                "awayScore": match_data.get("awayscore", ""),
+                                "matchId": match_data.get("matchId", ""),
+                                "homeName": match_data.get("homename", ""),
+                                "awayName": match_data.get("awayname", ""),
+                                "homeLogo": match_data.get("homelogo", ""),
+                                "awayLogo": match_data.get("awaylogo", "")
+                            }
+                            _LOGGER.debug(f"Updated live scores for game {game_id}: {live_scores_data[game_id]}")
                         
-        except aiohttp.ClientError as err:
-            _LOGGER.error(f"HTTP error fetching live scores: {err}")
-        except asyncio.TimeoutError:
-            _LOGGER.error("Timeout error fetching live scores")
-        except Exception as err:
-            _LOGGER.error(f"Unexpected error fetching live scores: {err}")
+            except aiohttp.ClientError as err:
+                _LOGGER.debug(f"HTTP error fetching live scores for competition {competition_id}: {err}")
+            except asyncio.TimeoutError:
+                _LOGGER.debug(f"Timeout error fetching live scores for competition {competition_id}")
+            except Exception as err:
+                _LOGGER.debug(f"Error fetching live scores for competition {competition_id}: {err}")
+        
+        if live_scores_data:
+            # Update the coordinator data with live scores
+            current_data = self.data or {}
+            current_data["live_scores"] = live_scores_data
+            self.async_set_updated_data(current_data)
+            _LOGGER.info(f"Updated live scores for {len(live_scores_data)} games")

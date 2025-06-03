@@ -3,9 +3,10 @@ from homeassistant import config_entries
 import voluptuous as vol
 import aiohttp
 import async_timeout
+import asyncio
 import logging
 
-from .const import DOMAIN
+from .const import DOMAIN, API_URL_FIXTURES, API_HEADERS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,25 +46,42 @@ class CEBLConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def _fetch_teams(self):
-        """Fetch the list of teams from the API."""
-        url = "https://api.streamplay.streamamg.com/fixtures/basketball/p/3001497?q=(type:fixture)&offset=0&limit=25"
+        """Fetch the list of teams from the new CEBL API."""
         try:
             async with async_timeout.timeout(10):
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(url) as response:
+                    async with session.get(API_URL_FIXTURES, headers=API_HEADERS) as response:
                         if response.status != 200:
-                            _LOGGER.error("Failed to fetch teams: %s", response.status)
+                            _LOGGER.error("Failed to fetch games: %s", response.status)
                             return None
-                        data = await response.json()
-                        teams = []
-                        for fixture in data["fixtures"]:
-                            home_team = fixture["homeTeam"]
-                            away_team = fixture["awayTeam"]
-                            if home_team not in teams:
-                                teams.append(home_team)
-                            if away_team not in teams:
-                                teams.append(away_team)
-                        return teams
+                        
+                        games = await response.json()
+                        teams = {}  # Use dict to avoid duplicates
+                        
+                        for game in games:
+                            # Add home team
+                            home_team_id = game.get("home_team_id")
+                            home_team_name = game.get("home_team_name")
+                            if home_team_id and home_team_name:
+                                teams[home_team_id] = {
+                                    "id": home_team_id,
+                                    "name": home_team_name
+                                }
+                            
+                            # Add away team
+                            away_team_id = game.get("away_team_id")
+                            away_team_name = game.get("away_team_name")
+                            if away_team_id and away_team_name:
+                                teams[away_team_id] = {
+                                    "id": away_team_id,
+                                    "name": away_team_name
+                                }
+                        
+                        # Convert dict values to list
+                        teams_list = list(teams.values())
+                        _LOGGER.info(f"Fetched {len(teams_list)} teams from CEBL API")
+                        return teams_list
+                        
         except aiohttp.ClientError as err:
             _LOGGER.error("HTTP error fetching teams: %s", err)
         except asyncio.TimeoutError:
