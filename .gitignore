@@ -6,6 +6,9 @@ test_cebl_api.py
 test_enhanced_data.py
 test_requirements.txt
 
+# Example files
+kick_off_examples.md
+
 # Release notes
 RELEASE_NOTES_*.md
 

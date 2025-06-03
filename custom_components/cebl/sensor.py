@@ -108,6 +108,20 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
         except (ValueError, TypeError) as e:
             _LOGGER.debug(f"Could not calculate time until game: {e}")
         return None
+    
+    def _calculate_kick_off_in_seconds(self, start_time_utc):
+        """Calculate seconds until game starts (negative if already started)."""
+        if not start_time_utc:
+            return None
+        try:
+            parsed_time = dt.parse_datetime(start_time_utc)
+            if parsed_time:
+                start_time_local = dt.as_local(parsed_time)
+                now = dt.now()
+                return int((start_time_local - now).total_seconds())
+        except (ValueError, TypeError) as e:
+            _LOGGER.debug(f"Could not calculate kick off seconds: {e}")
+        return None
 
     def _get_team_fixture(self):
         """Get the most relevant fixture for this team (live > upcoming > recent)."""
@@ -333,6 +347,9 @@ class CEBLGameSensor(CEBLBaseSensor):
             "score_difference": abs(live_data.get('team1_score', 0) - live_data.get('team2_score', 0)),
             # Detailed score information for POST games
             "final_score": f"{live_data.get('team1_score' if is_home_team else 'team2_score', 0)}-{live_data.get('team2_score' if is_home_team else 'team1_score', 0)}" if self._state == "POST" else None,
+            # Kick-off timing (useful for all states)
+            "kick_off_in": self._calculate_kick_off_in_seconds(fixture.get('start_time_utc')),
+            "kick_off_in_friendly": self._calculate_time_until_game(fixture.get('start_time_utc')),
             # Transition timing info
             "hours_since_game": None,  # Not applicable for live games
             "showing_completed_game": False
@@ -382,6 +399,9 @@ class CEBLGameSensor(CEBLBaseSensor):
             "final_score": f"{self._safe_score(home_team.get('score')) if is_home_team else self._safe_score(away_team.get('score'))}-{self._safe_score(away_team.get('score')) if is_home_team else self._safe_score(home_team.get('score'))}" if self._state == "POST" else None,
             # Time until game (for PRE state)
             "time_until_game": self._calculate_time_until_game(start_time_utc) if self._state == "PRE" else None,
+            # Kick-off timing (useful for all states)
+            "kick_off_in": self._calculate_kick_off_in_seconds(start_time_utc),
+            "kick_off_in_friendly": self._calculate_time_until_game(start_time_utc),
             # Transition timing info
             "hours_since_game": self._calculate_hours_since_game(start_time_utc, game_status),
             "showing_completed_game": game_status in ['COMPLETE', 'COMPLETED', 'FINAL']
