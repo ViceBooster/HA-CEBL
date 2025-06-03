@@ -1,4 +1,4 @@
-# 🏀 CEBL Home Assistant Integration
+ # 🏀 CEBL Home Assistant Integration
 
 <div align="center">
 
@@ -314,7 +314,7 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for detai
 
 ## 🙏 **Acknowledgments**
 
-- **CEBL** - For providing comprehensive API access
+- **CEBL** - For providing putting on a great show
 - **Team Tracker** - Original inspiration for this integration
 - **Home Assistant Community** - For feedback and support
 - **Beta Testers** - For helping perfect the experience
