@@ -87,6 +87,7 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
     def _calculate_time_until_game(self, start_time_utc):
         """Calculate user-friendly time until game starts."""
         if not start_time_utc:
+            _LOGGER.debug("No start_time_utc provided for time_until_game calculation")
             return None
         try:
             parsed_time = dt.parse_datetime(start_time_utc)
@@ -96,31 +97,41 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
                 if now < start_time_local:
                     delta = start_time_local - now
                     if delta.days > 0:
-                        return f"In {delta.days} days"
+                        result = f"In {delta.days} days"
                     elif delta.seconds > 3600:
                         hours = delta.seconds // 3600
-                        return f"In {hours} hours"
+                        result = f"In {hours} hours"
                     else:
                         minutes = delta.seconds // 60
-                        return f"In {minutes} minutes"
+                        result = f"In {minutes} minutes"
+                    _LOGGER.debug(f"Calculated time_until_game: '{result}' (delta: {delta})")
+                    return result
                 else:
+                    _LOGGER.debug("Game has already started - returning 'Starting soon'")
                     return "Starting soon"
+            else:
+                _LOGGER.debug(f"Could not parse start_time_utc: {start_time_utc}")
         except (ValueError, TypeError) as e:
-            _LOGGER.debug(f"Could not calculate time until game: {e}")
+            _LOGGER.debug(f"Could not calculate time until game for '{start_time_utc}': {e}")
         return None
     
     def _calculate_kick_off_in_seconds(self, start_time_utc):
         """Calculate seconds until game starts (negative if already started)."""
         if not start_time_utc:
+            _LOGGER.debug("No start_time_utc provided for kick_off_in calculation")
             return None
         try:
             parsed_time = dt.parse_datetime(start_time_utc)
             if parsed_time:
                 start_time_local = dt.as_local(parsed_time)
                 now = dt.now()
-                return int((start_time_local - now).total_seconds())
+                seconds = int((start_time_local - now).total_seconds())
+                _LOGGER.debug(f"Calculated kick_off_in: {seconds} seconds (start: {start_time_local}, now: {now})")
+                return seconds
+            else:
+                _LOGGER.debug(f"Could not parse start_time_utc: {start_time_utc}")
         except (ValueError, TypeError) as e:
-            _LOGGER.debug(f"Could not calculate kick off seconds: {e}")
+            _LOGGER.debug(f"Could not calculate kick off seconds for '{start_time_utc}': {e}")
         return None
 
     def _get_team_fixture(self):
@@ -398,12 +409,12 @@ class CEBLGameSensor(CEBLBaseSensor):
             # Detailed score information for POST games
             "final_score": f"{self._safe_score(home_team.get('score')) if is_home_team else self._safe_score(away_team.get('score'))}-{self._safe_score(away_team.get('score')) if is_home_team else self._safe_score(home_team.get('score'))}" if self._state == "POST" else None,
             # Time until game (for PRE state)
-            "time_until_game": self._calculate_time_until_game(start_time_utc) if self._state == "PRE" else None,
+            "time_until_game": self._calculate_time_until_game(fixture.get('start_time_utc', '')) if self._state == "PRE" else None,
             # Kick-off timing (useful for all states)
-            "kick_off_in": self._calculate_kick_off_in_seconds(start_time_utc),
-            "kick_off_in_friendly": self._calculate_time_until_game(start_time_utc),
+            "kick_off_in": self._calculate_kick_off_in_seconds(fixture.get('start_time_utc', '')),
+            "kick_off_in_friendly": self._calculate_time_until_game(fixture.get('start_time_utc', '')),
             # Transition timing info
-            "hours_since_game": self._calculate_hours_since_game(start_time_utc, game_status),
+            "hours_since_game": self._calculate_hours_since_game(fixture.get('start_time_utc', ''), game_status),
             "showing_completed_game": game_status in ['COMPLETE', 'COMPLETED', 'FINAL']
         }
 
