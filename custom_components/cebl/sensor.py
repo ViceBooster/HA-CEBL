@@ -62,6 +62,27 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
     def _update_state(self):
         """Update the sensor state - to be implemented by subclasses."""
         pass
+    
+    def _safe_score(self, score_value):
+        """Safely convert score to integer, handling None values."""
+        if score_value is None:
+            return 0
+        try:
+            return int(score_value)
+        except (ValueError, TypeError):
+            return 0
+    
+    def _calculate_hours_since_game(self, start_time_utc, game_status):
+        """Safely calculate hours since game ended."""
+        if not start_time_utc or game_status not in ['COMPLETE', 'COMPLETED', 'FINAL']:
+            return None
+        try:
+            parsed_time = dt.parse_datetime(start_time_utc)
+            if parsed_time:
+                return (dt.now() - dt.as_local(parsed_time)).total_seconds() / 3600
+        except (ValueError, TypeError) as e:
+            _LOGGER.debug(f"Could not calculate hours since game: {e}")
+        return None
 
     def _get_team_fixture(self):
         """Get the most relevant fixture for this team (live > upcoming > recent)."""
@@ -307,8 +328,8 @@ class CEBLGameSensor(CEBLBaseSensor):
             self._state = "IN"  # Live game in progress
         elif game_status in ['COMPLETE', 'COMPLETED', 'FINAL']:
             # Show final score for completed games
-            team_score = home_team.get('score', 0) if is_home_team else away_team.get('score', 0)
-            opponent_score = away_team.get('score', 0) if is_home_team else home_team.get('score', 0)
+            team_score = self._safe_score(home_team.get('score')) if is_home_team else self._safe_score(away_team.get('score'))
+            opponent_score = self._safe_score(away_team.get('score')) if is_home_team else self._safe_score(home_team.get('score'))
             self._state = f"{team_score}-{opponent_score} FINAL"
         elif start_time_utc:
             start_time_local = dt.as_local(start_time_utc)
@@ -340,11 +361,11 @@ class CEBLGameSensor(CEBLBaseSensor):
         self._attributes = {
             "team_id": self._team_id,
             "team_name": home_team['name'] if is_home_team else away_team['name'],
-            "team_logo": home_team.get('logo', ''),
-            "team_score": home_team.get('score', 0) if is_home_team else away_team.get('score', 0),
+            "team_logo": home_team.get('logo') or '',
+            "team_score": self._safe_score(home_team.get('score')) if is_home_team else self._safe_score(away_team.get('score')),
             "opponent_name": away_team['name'] if is_home_team else home_team['name'],
-            "opponent_logo": away_team.get('logo', '') if is_home_team else home_team.get('logo', ''),
-            "opponent_score": away_team.get('score', 0) if is_home_team else home_team.get('score', 0),
+            "opponent_logo": (away_team.get('logo') or '') if is_home_team else (home_team.get('logo') or ''),
+            "opponent_score": self._safe_score(away_team.get('score')) if is_home_team else self._safe_score(home_team.get('score')),
             "home_away": "home" if is_home_team else "away",
             "venue": fixture.get('venue_name', ''),
             "start_time": fixture.get('start_time_utc', ''),
@@ -357,10 +378,10 @@ class CEBLGameSensor(CEBLBaseSensor):
             "is_live": game_status in ['LIVE', 'IN_PROGRESS', 'HALFTIME', 'QUARTER_BREAK'],
             "is_final": game_status in ['COMPLETE', 'COMPLETED', 'FINAL'],
             "is_upcoming": start_time_utc and dt.now() < dt.as_local(start_time_utc) if start_time_utc else False,
-            "score_difference": abs((home_team.get('score', 0) if is_home_team else away_team.get('score', 0)) - 
-                                   (away_team.get('score', 0) if is_home_team else home_team.get('score', 0))),
+            "score_difference": abs(self._safe_score(home_team.get('score') if is_home_team else away_team.get('score')) - 
+                                   self._safe_score(away_team.get('score') if is_home_team else home_team.get('score'))),
             # Transition timing info
-            "hours_since_game": (dt.now() - dt.as_local(start_time_utc)).total_seconds() / 3600 if start_time_utc and game_status in ['COMPLETE', 'COMPLETED', 'FINAL'] else None,
+            "hours_since_game": self._calculate_hours_since_game(start_time_utc, game_status),
             "showing_completed_game": game_status in ['COMPLETE', 'COMPLETED', 'FINAL']
         }
 
