@@ -150,6 +150,9 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
             if parsed_time:
                 start_time_local = dt.as_local(parsed_time)
                 now = dt.now()
+                
+                _LOGGER.debug(f"time_until_game calc: start={start_time_local}, now={now}")
+                
                 if now < start_time_local:
                     delta = start_time_local - now
                     if delta.days > 0:
@@ -160,15 +163,15 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
                     else:
                         minutes = delta.seconds // 60
                         result = f"In {minutes} minutes"
-                    _LOGGER.debug(f"Calculated time_until_game: '{result}' (delta: {delta})")
+                    _LOGGER.debug(f"Calculated time_until_game: '{result}' (delta: {delta}, total_seconds: {delta.total_seconds()})")
                     return result
                 else:
-                    _LOGGER.debug("Game has already started - returning 'Starting soon'")
+                    _LOGGER.debug(f"Game has already started - returning 'Starting soon' (game was {(now - start_time_local).total_seconds()} seconds ago)")
                     return "Starting soon"
             else:
-                _LOGGER.debug(f"Could not parse start_time_utc: {start_time_utc}")
+                _LOGGER.warning(f"Could not parse start_time_utc: {start_time_utc}")
         except (ValueError, TypeError) as e:
-            _LOGGER.debug(f"Could not calculate time until game for '{start_time_utc}': {e}")
+            _LOGGER.warning(f"Could not calculate time until game for '{start_time_utc}': {e}")
         return None
     
     def _calculate_kick_off_in_seconds(self, start_time_utc):
@@ -182,12 +185,12 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
                 start_time_local = dt.as_local(parsed_time)
                 now = dt.now()
                 seconds = int((start_time_local - now).total_seconds())
-                _LOGGER.debug(f"Calculated kick_off_in: {seconds} seconds (start: {start_time_local}, now: {now})")
+                _LOGGER.debug(f"kick_off_in calc: start={start_time_local}, now={now}, seconds={seconds}")
                 return seconds
             else:
-                _LOGGER.debug(f"Could not parse start_time_utc: {start_time_utc}")
+                _LOGGER.warning(f"Could not parse start_time_utc: {start_time_utc}")
         except (ValueError, TypeError) as e:
-            _LOGGER.debug(f"Could not calculate kick off seconds for '{start_time_utc}': {e}")
+            _LOGGER.warning(f"Could not calculate kick off seconds for '{start_time_utc}': {e}")
         return None
 
     def _get_team_fixture(self):
@@ -570,6 +573,9 @@ class CEBLGameSensor(CEBLBaseSensor):
         start_time_utc = dt.parse_datetime(fixture.get('start_time_utc', ''))
         game_status = fixture.get('status', '').upper()
         
+        # Get the raw start_time_utc string for debugging
+        start_time_utc_str = fixture.get('start_time_utc', '')
+        
         # Use the reliable 'live' field from API as primary indicator
         is_live_from_api = fixture.get('live', 0) == 1
         
@@ -595,6 +601,14 @@ class CEBLGameSensor(CEBLBaseSensor):
             self._is_live_game = False
             _LOGGER.debug(f"Game {self._team_id}: PRE (default) - Status: {game_status}, Live: {is_live_from_api}")
         
+        # Calculate all timing attributes consistently
+        kick_off_seconds = self._calculate_kick_off_in_seconds(start_time_utc_str)
+        kick_off_friendly = self._calculate_time_until_game(start_time_utc_str)
+        hours_since = self._calculate_hours_since_game(start_time_utc_str, game_status)
+        
+        # For PRE games, provide additional time context
+        time_until_game = kick_off_friendly if self._state == "PRE" else None
+        
         self._attributes = {
             "team_id": self._team_id,
             "team_name": home_team['name'] if is_home_team else away_team['name'],
@@ -605,7 +619,7 @@ class CEBLGameSensor(CEBLBaseSensor):
             "opponent_score": self._safe_score(away_team.get('score')) if is_home_team else self._safe_score(home_team.get('score')),
             "home_away": "home" if is_home_team else "away",
             "venue": fixture.get('venue_name', ''),
-            "start_time": fixture.get('start_time_utc', ''),
+            "start_time": start_time_utc_str,
             "competition": fixture.get('competition', ''),
             "status": fixture.get('status', ''),
             "stats_url": fixture.get('stats_url', ''),
@@ -619,24 +633,33 @@ class CEBLGameSensor(CEBLBaseSensor):
                                    self._safe_score(away_team.get('score') if is_home_team else home_team.get('score'))),
             # Detailed score information for POST games
             "final_score": f"{self._safe_score(home_team.get('score')) if is_home_team else self._safe_score(away_team.get('score'))}-{self._safe_score(away_team.get('score')) if is_home_team else self._safe_score(home_team.get('score'))}" if self._state == "POST" else None,
-            # Time until game (for PRE state)
-            "time_until_game": self._calculate_time_until_game(fixture.get('start_time_utc', '')) if self._state == "PRE" else None,
-            # Kick-off timing (useful for all states)
-            "kick_off_in": self._calculate_kick_off_in_seconds(fixture.get('start_time_utc', '')),
-            "kick_off_in_friendly": self._calculate_time_until_game(fixture.get('start_time_utc', '')),
-            # Transition timing info
-            "hours_since_game": self._calculate_hours_since_game(fixture.get('start_time_utc', ''), game_status),
+            # FIXED: All timing calculations now use the same input and consistent logic
+            "time_until_game": time_until_game,
+            "kick_off_in": kick_off_seconds,
+            "kick_off_in_friendly": kick_off_friendly,
+            "hours_since_game": hours_since,
             "showing_completed_game": self._state == "POST",
             # Update tracking
             "last_updated": dt.now().isoformat(),
             "update_frequency": "30 seconds" if self._is_live_game else "1 minute",
-            # Debug info - now includes API live field
+            # Enhanced debug info to troubleshoot timing issues
             "data_source": "fixture_only",
             "fixture_status": game_status,
             "api_live_field": is_live_from_api,
             "game_clock": fixture.get('clock', ''),
             "period": fixture.get('period', 0),
-            "period_type": fixture.get('period_type', '')
+            "period_type": fixture.get('period_type', ''),
+            # Debug timing calculations
+            "debug_start_time_utc_raw": start_time_utc_str,
+            "debug_start_time_parsed": start_time_utc.isoformat() if start_time_utc else None,
+            "debug_now": dt.now().isoformat(),
+            "debug_state_logic": f"live_api={is_live_from_api}, status={game_status}, state={self._state}",
+            # Consistency check
+            "timing_consistency_check": {
+                "kick_off_seconds": kick_off_seconds,
+                "friendly_matches_seconds": kick_off_friendly == "Starting soon" if kick_off_seconds and kick_off_seconds < 0 else kick_off_friendly,
+                "all_use_same_start_time": start_time_utc_str
+            }
         }
 
 class CEBLTeamStatsSensor(CEBLBaseSensor):
