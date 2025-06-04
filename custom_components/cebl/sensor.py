@@ -464,7 +464,7 @@ class CEBLTeamSensor(CEBLBaseSensor):
                 self._is_live_game = False
                 self._state = "No upcoming game"
                 self._attributes = {"team_id": self._team_id}
-        
+
         # Manage live update frequency
         if self._is_live_game and not was_live:
             # Game just went live, start frequent updates
@@ -504,10 +504,12 @@ class CEBLTeamSensor(CEBLBaseSensor):
             fixture_status = fixture.get('status', '').upper()
             
             # If fixture says SCHEDULED and start time is in future, live data is probably old
+            # BUT only if we don't have more specific logic to handle it (like team1_*/team2_* structure)
             if fixture_status == 'SCHEDULED' and fixture_dt > now:
                 time_until_game = (fixture_dt - now).total_seconds()
                 # If game is more than 1 hour in the future, live data is definitely old
-                if time_until_game > 3600:  # 1 hour
+                # UNLESS it's team1_*/team2_* structure which has its own validation below
+                if time_until_game > 3600 and not ('team1_name' in live_data and 'team2_name' in live_data):  # 1 hour
                     _LOGGER.debug(f"Game {self._team_id}: Game scheduled for {fixture_dt}, {time_until_game/3600:.1f} hours away - live data is old")
                     return False
             
@@ -517,6 +519,21 @@ class CEBLTeamSensor(CEBLBaseSensor):
                 if not is_api_live and fixture_status == 'SCHEDULED':
                     _LOGGER.debug(f"Game {self._team_id}: API live=0 and fixture SCHEDULED - live data is old")
                     return False
+            
+            # Special handling for team1_*/team2_* structure (which doesn't have 'live' field)
+            # If it's a SCHEDULED future game and we have completed game data (period=4, clock=00:00),
+            # this is definitely stale data from a previous game
+            elif 'team1_name' in live_data and 'team2_name' in live_data:
+                period = live_data.get('period', 0)
+                clock = live_data.get('clock', '00:00:00')
+                
+                # If fixture is SCHEDULED for future, but live data shows completed game, it's stale
+                if fixture_status == 'SCHEDULED' and fixture_dt > now:
+                    # Check if live data shows a completed game (period 4 + clock stopped)
+                    is_completed_data = (period >= 4 and (clock in ['00:00', '0:00', '00:00:00'] or not clock.strip()))
+                    if is_completed_data:
+                        _LOGGER.debug(f"Game {self._team_id}: team1_*/team2_* data shows completed game (period={period}, clock='{clock}') but fixture is SCHEDULED for future - live data is old")
+                        return False
             
             # If we get here, assume live data is current
             return True
@@ -537,7 +554,7 @@ class CEBLTeamSensor(CEBLBaseSensor):
                 home_team = game_data['homeTeam']
                 away_team = game_data['awayTeam']
                 is_home_team = str(home_team['id']) == self._team_id
-                
+        
                 # Use API live field as primary indicator
                 is_live_from_api = game_data.get('live', 0) == 1
                 
@@ -643,6 +660,31 @@ class CEBLTeamSensor(CEBLBaseSensor):
                 }
                 
                 _LOGGER.debug(f"Game {self._team_id}: Team mapping - Our team: {our_team_name} ({'team1' if our_team_is_team1 else 'team2'}), Opponent: {opponent_name}, Home/Away: {'home' if is_home_team else 'away'}")
+                
+                # IMPORTANT: Check if this live data is actually current for the fixture
+                # Don't trust period/clock logic if the fixture is scheduled for the future
+                fixture_status = fixture.get('status', '').upper() if fixture else 'UNKNOWN'
+                fixture_start_time = fixture.get('start_time_utc', '') if fixture else ''
+                
+                # If fixture is SCHEDULED and in the future, this live data is stale
+                if fixture and fixture_status == 'SCHEDULED' and fixture_start_time:
+                    from datetime import datetime
+                    import pytz
+                    try:
+                        if fixture_start_time.endswith('Z'):
+                            fixture_dt = datetime.fromisoformat(fixture_start_time[:-1]).replace(tzinfo=pytz.UTC)
+                        else:
+                            fixture_dt = datetime.fromisoformat(fixture_start_time).replace(tzinfo=pytz.UTC)
+                        
+                        now = datetime.now(pytz.UTC)
+                        if fixture_dt > now:
+                            time_until_fixture = (fixture_dt - now).total_seconds()
+                            if time_until_fixture > 3600:  # More than 1 hour away
+                                _LOGGER.debug(f"Game {self._team_id}: Fixture scheduled for {fixture_dt} ({time_until_fixture/3600:.1f}h away) - ignoring stale live data with period={period}")
+                                # Don't set state here - let the caller use fixture data instead
+                                return
+                    except Exception as e:
+                        _LOGGER.debug(f"Game {self._team_id}: Error parsing fixture time: {e}")
                 
                 # Determine game state based on period, clock, and OT status
                 clock_str = game_info['clock']
