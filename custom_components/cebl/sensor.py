@@ -198,11 +198,11 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
         team_fixtures = []
         for fixture in fixtures:
             try:
-                home_team_id = str(fixture['homeTeam']['id'])
-                away_team_id = str(fixture['awayTeam']['id'])
-                
-                if home_team_id == self._team_id or away_team_id == self._team_id:
-                    team_fixtures.append(fixture)
+            home_team_id = str(fixture['homeTeam']['id'])
+            away_team_id = str(fixture['awayTeam']['id'])
+            
+            if home_team_id == self._team_id or away_team_id == self._team_id:
+                team_fixtures.append(fixture)
             except (KeyError, TypeError) as e:
                 _LOGGER.debug(f"Invalid fixture data: {e}")
                 continue
@@ -310,20 +310,20 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
         
         for game_id, live_data in live_scores.items():
             try:
-                # Check if this team is in this game
-                fixture = None
+            # Check if this team is in this game
+            fixture = None
                 fixtures = data.get('fixtures', [])
                 for f in fixtures:
-                    if f.get('id') == int(game_id):
-                        fixture = f
-                        break
+                if f.get('id') == int(game_id):
+                    fixture = f
+                    break
+            
+            if fixture:
+                home_team_id = str(fixture['homeTeam']['id'])
+                away_team_id = str(fixture['awayTeam']['id'])
                 
-                if fixture:
-                    home_team_id = str(fixture['homeTeam']['id'])
-                    away_team_id = str(fixture['awayTeam']['id'])
-                    
-                    if home_team_id == self._team_id or away_team_id == self._team_id:
-                        return live_data, fixture
+                if home_team_id == self._team_id or away_team_id == self._team_id:
+                    return live_data, fixture
             except (KeyError, TypeError, ValueError) as e:
                 _LOGGER.debug(f"Error processing live data for game {game_id}: {e}")
                 continue
@@ -558,7 +558,7 @@ class CEBLTeamSensor(CEBLBaseSensor):
             if 'homeTeam' in game_data and 'awayTeam' in game_data:
                 home_team = game_data['homeTeam']
                 away_team = game_data['awayTeam']
-                is_home_team = str(home_team['id']) == self._team_id
+        is_home_team = str(home_team['id']) == self._team_id
         
                 # Use API live field as primary indicator
                 is_live_from_api = game_data.get('live', 0) == 1
@@ -583,12 +583,12 @@ class CEBLTeamSensor(CEBLBaseSensor):
                     # If API says not live, check if it's completed
                     game_status = game_data.get('status', '').upper()
                     if game_status in ['COMPLETE', 'COMPLETED', 'FINAL']:
-                        self._state = "POST"
+            self._state = "POST"
                         self._is_live_game = False
                         _LOGGER.debug(f"Game {self._team_id}: Game completed (API live=0, status={game_status})")
                     else:
                         # Unclear state - use conservative approach
-                        self._state = "IN"
+            self._state = "IN"
                         self._is_live_game = True
                         _LOGGER.debug(f"Game {self._team_id}: Uncertain state, assuming live (status={game_status})")
                 
@@ -622,7 +622,7 @@ class CEBLTeamSensor(CEBLBaseSensor):
                             is_home_team = True  # We are home team, and we are team1
                         elif home_team_name == team2_name:
                             is_home_team = True  # We are home team, but we are team2 in live data
-                        else:
+        else:
                             is_home_team = True  # Default assumption
                             _LOGGER.debug(f"Game {self._team_id}: Name mismatch - fixture home: {home_team_name}, live teams: {team1_name}, {team2_name}")
                     elif self._team_id == away_team_id:
@@ -718,7 +718,7 @@ class CEBLTeamSensor(CEBLBaseSensor):
                     self._is_live_game = True
                     _LOGGER.debug(f"Game {self._team_id}: Game in progress (period={period}, clock={clock_str}, OT={in_ot})")
                 else:
-                    self._state = "PRE"
+            self._state = "PRE"
                     self._is_live_game = False
                     _LOGGER.debug(f"Game {self._team_id}: Game not started (period={period})")
             

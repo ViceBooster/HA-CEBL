@@ -369,9 +369,17 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
                                     "time_leading": tm2.get('tot_sTimeLeading', 0)
                                 },
                                 
-                                # Player information
+                                # Player information (in the format the sensor expects)
                                 "team1_players": team1_players,
                                 "team2_players": team2_players,
+                                
+                                # Also provide the original tm structure for sensors that still use it
+                                "tm": {
+                                    "1": tm1,
+                                    "2": tm2
+                                },
+                                
+                                # Legacy top scorers list
                                 "top_scorers": top_scorer_list,
                                 
                                 # Game officials
