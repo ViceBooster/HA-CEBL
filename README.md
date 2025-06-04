@@ -18,7 +18,7 @@
 
 ## 🚀 **What's New in v1.54 "Championship Edition"**
 
-This isn't just an update - it's a **complete transformation**! We've rebuilt the entire integration with the official CEBL API to deliver professional-grade sports data.
+This isn't just an update - it's a **complete transformation**! We've rebuilt the entire integration with the official CEBL and GeniusSports APIs to deliver professional-grade sports data.
 
 ### ✨ **Professional Sports Dashboard Experience**
 - 🎯 **4 Comprehensive Sensors Per Team** (instead of 1 basic sensor)
