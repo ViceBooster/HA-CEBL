@@ -48,11 +48,66 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
         self._team_id = str(team_id) if team_id else None
         self._state = None
         self._attributes = {}
+        self._time_update_remover = None
+        self._live_update_remover = None
+        self._is_live_game = False
         
     async def async_added_to_hass(self):
         """Run when entity about to be added to Home Assistant."""
         self.async_on_remove(self.coordinator.async_add_listener(self._update_state))
         self._update_state()
+        
+        # Set up time-based updates for time-sensitive attributes
+        self._setup_time_updates()
+
+    async def async_will_remove_from_hass(self):
+        """Clean up when entity is removed."""
+        if self._time_update_remover:
+            self._time_update_remover()
+        if self._live_update_remover:
+            self._live_update_remover()
+
+    def _setup_time_updates(self):
+        """Set up time-based updates for time-sensitive attributes."""
+        # Update time-sensitive attributes every minute
+        self._time_update_remover = async_track_time_interval(
+            self.hass, self._async_time_update, timedelta(minutes=1)
+        )
+        
+    def _setup_live_updates(self):
+        """Set up frequent updates for live games (every 30 seconds)."""
+        if self._live_update_remover:
+            self._live_update_remover()
+            
+        self._live_update_remover = async_track_time_interval(
+            self.hass, self._async_live_update, timedelta(seconds=30)
+        )
+        
+    def _remove_live_updates(self):
+        """Remove frequent live game updates."""
+        if self._live_update_remover:
+            self._live_update_remover()
+            self._live_update_remover = None
+
+    async def _async_time_update(self, _):
+        """Update time-sensitive attributes every minute."""
+        old_attributes = self._attributes.copy()
+        self._update_time_sensitive_attributes()
+        
+        # Only trigger state update if time-sensitive attributes changed
+        if self._attributes != old_attributes:
+            self.async_write_ha_state()
+            
+    async def _async_live_update(self, _):
+        """Update live game data every 30 seconds."""
+        if self._is_live_game:
+            # Force a coordinator refresh for live games
+            await self.coordinator.async_request_refresh()
+
+    def _update_time_sensitive_attributes(self):
+        """Update only time-sensitive attributes without full state refresh."""
+        # This will be overridden by subclasses that have time-sensitive attributes
+        pass
 
     async def async_update(self):
         """Update the sensor state."""
@@ -271,6 +326,7 @@ class CEBLGameSensor(CEBLBaseSensor):
     def __init__(self, hass: HomeAssistant, coordinator: DataUpdateCoordinator, team_id):
         super().__init__(hass, coordinator, team_id)
         self._unique_id = format_mac(f"cebl_game_{self._team_id}")
+        self._current_fixture = None
 
     @property
     def name(self):
@@ -293,20 +349,66 @@ class CEBLGameSensor(CEBLBaseSensor):
     def icon(self):
         return "mdi:basketball"
 
+    def _update_time_sensitive_attributes(self):
+        """Update time-sensitive attributes like kick_off_in and kick_off_in_friendly."""
+        if self._current_fixture and 'start_time_utc' in self._current_fixture:
+            start_time_utc = self._current_fixture.get('start_time_utc')
+            
+            # Recalculate time-sensitive attributes
+            kick_off_seconds = self._calculate_kick_off_in_seconds(start_time_utc)
+            kick_off_friendly = self._calculate_time_until_game(start_time_utc)
+            
+            # Update only if values changed
+            if self._attributes.get('kick_off_in') != kick_off_seconds:
+                self._attributes['kick_off_in'] = kick_off_seconds
+                
+            if self._attributes.get('kick_off_in_friendly') != kick_off_friendly:
+                self._attributes['kick_off_in_friendly'] = kick_off_friendly
+                
+            # Update hours since game for completed games
+            if self._state == "POST":
+                game_status = self._current_fixture.get('status', '').upper()
+                hours_since = self._calculate_hours_since_game(start_time_utc, game_status)
+                if self._attributes.get('hours_since_game') != hours_since:
+                    self._attributes['hours_since_game'] = hours_since
+
     def _update_state(self):
         live_data, fixture = self._get_team_live_data()
         
+        # Store current fixture for time-sensitive updates
+        if fixture:
+            self._current_fixture = fixture
+        else:
+            self._current_fixture = self._get_team_fixture()
+        
+        # Determine if this is a live game and manage update frequency
+        was_live = self._is_live_game
+        
         if live_data:
             # Live game data available
+            self._is_live_game = True
             self._update_live_game_state(live_data, fixture)
         else:
             # No live data, use fixture data
             fixture = self._get_team_fixture()
             if fixture:
+                game_status = fixture.get('status', '').upper()
+                self._is_live_game = game_status in ['LIVE', 'IN_PROGRESS', 'HALFTIME', 'QUARTER_BREAK']
                 self._update_fixture_state(fixture)
             else:
+                self._is_live_game = False
                 self._state = "No upcoming game"
                 self._attributes = {"team_id": self._team_id}
+        
+        # Manage live update frequency
+        if self._is_live_game and not was_live:
+            # Game just went live, start frequent updates
+            self._setup_live_updates()
+            _LOGGER.debug(f"Started live updates for team {self._team_id}")
+        elif not self._is_live_game and was_live:
+            # Game is no longer live, stop frequent updates
+            self._remove_live_updates()
+            _LOGGER.debug(f"Stopped live updates for team {self._team_id}")
 
     def _update_live_game_state(self, live_data, fixture):
         """Update state with live game data."""
@@ -322,12 +424,15 @@ class CEBLGameSensor(CEBLBaseSensor):
         if clock == '00:00' and period >= 4:
             # Game is over
             self._state = "POST"
+            self._is_live_game = False  # Game ended, no longer live
         elif period > 0 and (clock != '00:00' or period >= 1):
             # Game is in progress
             self._state = "IN"
+            self._is_live_game = True
         else:
             # Pre-game or game about to start
             self._state = "PRE"
+            self._is_live_game = False
         
         # Build comprehensive attributes
         self._attributes = {
@@ -353,7 +458,7 @@ class CEBLGameSensor(CEBLBaseSensor):
             "cebl_stats_url": fixture.get('cebl_stats_url', ''),
             # Enhanced status tracking
             "game_status": self._state,
-            "is_live": period > 0 and clock != '00:00',
+            "is_live": self._is_live_game,
             "is_final": clock == '00:00' and period >= 4,
             "score_difference": abs(live_data.get('team1_score', 0) - live_data.get('team2_score', 0)),
             # Detailed score information for POST games
@@ -363,7 +468,10 @@ class CEBLGameSensor(CEBLBaseSensor):
             "kick_off_in_friendly": self._calculate_time_until_game(fixture.get('start_time_utc')),
             # Transition timing info
             "hours_since_game": None,  # Not applicable for live games
-            "showing_completed_game": False
+            "showing_completed_game": False,
+            # Live game indicators
+            "last_updated": dt.now().isoformat(),
+            "update_frequency": "30 seconds" if self._is_live_game else "1 minute"
         }
 
     def _update_fixture_state(self, fixture):
@@ -379,10 +487,13 @@ class CEBLGameSensor(CEBLBaseSensor):
         # Determine proper state based on game status and time
         if game_status in ['LIVE', 'IN_PROGRESS', 'HALFTIME', 'QUARTER_BREAK']:
             self._state = "IN"  # Live game in progress
+            self._is_live_game = True
         elif game_status in ['COMPLETE', 'COMPLETED', 'FINAL']:
             self._state = "POST"  # Completed game
+            self._is_live_game = False
         else:
             self._state = "PRE"  # Scheduled/upcoming game
+            self._is_live_game = False
         
         self._attributes = {
             "team_id": self._team_id,
@@ -401,7 +512,7 @@ class CEBLGameSensor(CEBLBaseSensor):
             "cebl_stats_url": fixture.get('cebl_stats_url', ''),
             # Enhanced status tracking
             "game_status": self._state,
-            "is_live": game_status in ['LIVE', 'IN_PROGRESS', 'HALFTIME', 'QUARTER_BREAK'],
+            "is_live": self._is_live_game,
             "is_final": game_status in ['COMPLETE', 'COMPLETED', 'FINAL'],
             "is_upcoming": start_time_utc and dt.now() < dt.as_local(start_time_utc) if start_time_utc else False,
             "score_difference": abs(self._safe_score(home_team.get('score') if is_home_team else away_team.get('score')) - 
@@ -415,7 +526,10 @@ class CEBLGameSensor(CEBLBaseSensor):
             "kick_off_in_friendly": self._calculate_time_until_game(fixture.get('start_time_utc', '')),
             # Transition timing info
             "hours_since_game": self._calculate_hours_since_game(fixture.get('start_time_utc', ''), game_status),
-            "showing_completed_game": game_status in ['COMPLETE', 'COMPLETED', 'FINAL']
+            "showing_completed_game": game_status in ['COMPLETE', 'COMPLETED', 'FINAL'],
+            # Update tracking
+            "last_updated": dt.now().isoformat(),
+            "update_frequency": "30 seconds" if self._is_live_game else "1 minute"
         }
 
 class CEBLTeamStatsSensor(CEBLBaseSensor):
@@ -449,7 +563,11 @@ class CEBLTeamStatsSensor(CEBLBaseSensor):
     def _update_state(self):
         live_data, fixture = self._get_team_live_data()
         
+        # Determine if this is a live game and manage update frequency
+        was_live = self._is_live_game
+        
         if live_data and fixture:
+            self._is_live_game = True
             home_team = fixture['homeTeam']
             away_team = fixture['awayTeam']
             is_home_team = str(home_team['id']) == self._team_id
@@ -475,9 +593,13 @@ class CEBLTeamStatsSensor(CEBLBaseSensor):
                 "points_from_turnovers": team_stats.get('points_from_turnovers', 0),
                 "fast_break_points": team_stats.get('fast_break_points', 0),
                 "biggest_lead": team_stats.get('biggest_lead', 0),
-                "time_leading": team_stats.get('time_leading', 0)
+                "time_leading": team_stats.get('time_leading', 0),
+                "is_live": True,
+                "last_updated": dt.now().isoformat(),
+                "update_frequency": "30 seconds"
             }
         else:
+            self._is_live_game = False
             self._state = "No game data"
             fixture = self._get_team_fixture()
             team_name = "Team"
@@ -489,8 +611,21 @@ class CEBLTeamStatsSensor(CEBLBaseSensor):
             
             self._attributes = {
                 "team_id": self._team_id,
-                "team_name": team_name
+                "team_name": team_name,
+                "is_live": False,
+                "last_updated": dt.now().isoformat(),
+                "update_frequency": "1 minute"
             }
+        
+        # Manage live update frequency
+        if self._is_live_game and not was_live:
+            # Game just went live, start frequent updates
+            self._setup_live_updates()
+            _LOGGER.debug(f"Started live updates for team {self._team_id} stats")
+        elif not self._is_live_game and was_live:
+            # Game is no longer live, stop frequent updates
+            self._remove_live_updates()
+            _LOGGER.debug(f"Stopped live updates for team {self._team_id} stats")
 
 class CEBLTopScorerSensor(CEBLBaseSensor):
     """Sensor for team's top scorer in current game."""
@@ -523,7 +658,11 @@ class CEBLTopScorerSensor(CEBLBaseSensor):
     def _update_state(self):
         live_data, fixture = self._get_team_live_data()
         
+        # Determine if this is a live game and manage update frequency
+        was_live = self._is_live_game
+        
         if live_data and fixture:
+            self._is_live_game = True
             home_team = fixture['homeTeam']
             away_team = fixture['awayTeam']
             is_home_team = str(home_team['id']) == self._team_id
@@ -556,15 +695,22 @@ class CEBLTopScorerSensor(CEBLBaseSensor):
                     "three_point_percentage": top_scorer.get('three_point_percentage', 0),
                     "player_photo": top_scorer.get('photo', ''),
                     "starter": top_scorer.get('starter', 0) == 1,
-                    "captain": top_scorer.get('captain', 0) == 1
+                    "captain": top_scorer.get('captain', 0) == 1,
+                    "is_live": True,
+                    "last_updated": dt.now().isoformat(),
+                    "update_frequency": "30 seconds"
                 }
             else:
                 self._state = "No player data"
                 self._attributes = {
                     "team_id": self._team_id,
-                    "team_name": home_team['name'] if is_home_team else away_team['name']
+                    "team_name": home_team['name'] if is_home_team else away_team['name'],
+                    "is_live": True,
+                    "last_updated": dt.now().isoformat(),
+                    "update_frequency": "30 seconds"
                 }
         else:
+            self._is_live_game = False
             self._state = "No game data"
             fixture = self._get_team_fixture()
             team_name = "Team"
@@ -576,8 +722,21 @@ class CEBLTopScorerSensor(CEBLBaseSensor):
             
             self._attributes = {
                 "team_id": self._team_id,
-                "team_name": team_name
+                "team_name": team_name,
+                "is_live": False,
+                "last_updated": dt.now().isoformat(),
+                "update_frequency": "1 minute"
             }
+        
+        # Manage live update frequency
+        if self._is_live_game and not was_live:
+            # Game just went live, start frequent updates
+            self._setup_live_updates()
+            _LOGGER.debug(f"Started live updates for team {self._team_id} top scorer")
+        elif not self._is_live_game and was_live:
+            # Game is no longer live, stop frequent updates
+            self._remove_live_updates()
+            _LOGGER.debug(f"Stopped live updates for team {self._team_id} top scorer")
 
 class CEBLLeagueScoreboardSensor(CEBLBaseSensor):
     """Sensor for league-wide scoreboard."""
@@ -613,6 +772,7 @@ class CEBLLeagueScoreboardSensor(CEBLBaseSensor):
         # Count active games
         active_games = 0
         all_games = []
+        has_live_games = False
         
         for game_id, live_data in live_scores.items():
             other_games = live_data.get('other_games', [])
@@ -632,13 +792,31 @@ class CEBLLeagueScoreboardSensor(CEBLBaseSensor):
                 # Count as active if not final
                 if game.get('clock', '00:00') != '00:00' or game.get('period', 0) < 4:
                     active_games += 1
+                    has_live_games = True
             
             # Only need to process one live_data entry for other_games
             break
+        
+        # Determine if this sensor should use live updates
+        was_live = self._is_live_game
+        self._is_live_game = has_live_games
         
         self._state = f"{active_games} active games"
         self._attributes = {
             "active_games": active_games,
             "total_games": len(all_games),
-            "games": all_games[:10]  # Limit to 10 games for attributes
+            "games": all_games[:10],  # Limit to 10 games for attributes
+            "is_live": has_live_games,
+            "last_updated": dt.now().isoformat(),
+            "update_frequency": "30 seconds" if has_live_games else "1 minute"
         }
+        
+        # Manage live update frequency
+        if self._is_live_game and not was_live:
+            # Games are now live, start frequent updates
+            self._setup_live_updates()
+            _LOGGER.debug("Started live updates for league scoreboard")
+        elif not self._is_live_game and was_live:
+            # No more live games, stop frequent updates
+            self._remove_live_updates()
+            _LOGGER.debug("Stopped live updates for league scoreboard")

@@ -24,8 +24,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     _LOGGER.info("CEBL integration setup complete.")
 
-    # Schedule live score updates every minute
-    async_track_time_interval(hass, coordinator.async_update_live_scores, timedelta(minutes=1))
+    # Schedule live score updates every 30 seconds for better real-time updates
+    async_track_time_interval(hass, coordinator.async_update_live_scores, timedelta(seconds=30))
 
     return True
 
