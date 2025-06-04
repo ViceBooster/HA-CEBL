@@ -264,7 +264,7 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
                                     "points": player.get('tot', 0),
                                     "team": player.get('tno', 0),
                                     "jersey": player.get('shirtNumber', ''),
-                                    "photo": player.get('photoS', '')
+                                    "photo": player.get('photoS', '').strip()
                                 })
                             
                             # Extract player details for both teams
@@ -289,7 +289,7 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
                                             "plus_minus": player.get('sPlusMinusPoints', 0),
                                             "fg_percentage": player.get('sFieldGoalsPercentage', 0),
                                             "three_point_percentage": player.get('sThreePointersPercentage', 0),
-                                            "photo": player.get('photoS', ''),
+                                            "photo": player.get('photoS', '').strip(),
                                             "starter": player.get('starter', 0),
                                             "captain": player.get('captain', 0)
                                         })

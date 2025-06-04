@@ -1,7 +1,7 @@
 {
   "domain": "cebl",
   "name": "CEBL Tracker",
-  "version": "1.60",
+  "version": "1.61",
   "documentation": "https://github.com/ViceBooster/HA-CEBL",
   "requirements": [],
   "dependencies": [],
