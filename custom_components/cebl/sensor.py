@@ -343,12 +343,52 @@ class CEBLTeamSensor(CEBLBaseSensor):
     
     def __init__(self, hass: HomeAssistant, coordinator: DataUpdateCoordinator, team_id):
         super().__init__(hass, coordinator, team_id)
-        self._unique_id = format_mac(f"cebl_{self._team_id}")
+        
+        # Get team name for proper entity naming
+        self._team_name = self._get_team_name_from_data()
+        self._team_slug = self._create_team_slug(self._team_name)
+        
+        # Use team name slug for unique ID instead of team ID number
+        self._unique_id = format_mac(f"cebl_{self._team_slug}")
         self._current_fixture = None
+    
+    def _get_team_name_from_data(self):
+        """Get team name from coordinator data."""
+        try:
+            fixtures = self.coordinator.data.get('fixtures', [])
+            for fixture in fixtures:
+                home_team = fixture.get('homeTeam', {})
+                away_team = fixture.get('awayTeam', {})
+                
+                if str(home_team.get('id')) == self._team_id:
+                    return home_team.get('name', f'Team {self._team_id}')
+                elif str(away_team.get('id')) == self._team_id:
+                    return away_team.get('name', f'Team {self._team_id}')
+            
+            # Fallback - try to extract from team ID mapping
+            return f'Team {self._team_id}'
+        except Exception as e:
+            _LOGGER.debug(f"Error getting team name for {self._team_id}: {e}")
+            return f'Team {self._team_id}'
+    
+    def _create_team_slug(self, team_name):
+        """Create a valid entity ID slug from team name."""
+        import re
+        
+        # Convert to lowercase and replace spaces/special chars with underscores
+        slug = re.sub(r'[^a-z0-9]+', '_', team_name.lower())
+        # Remove leading/trailing underscores
+        slug = slug.strip('_')
+        # Ensure it doesn't start with a number
+        if slug and slug[0].isdigit():
+            slug = f'team_{slug}'
+        
+        return slug or f'team_{self._team_id}'
 
     @property
     def name(self):
-        team_name = self._attributes.get('team_name', 'Team')
+        # Use stored team name, fallback to attributes if needed
+        team_name = self._team_name or self._attributes.get('team_name', f'Team {self._team_id}')
         return f"CEBL {team_name}"
 
     @property
@@ -402,12 +442,29 @@ class CEBLTeamSensor(CEBLBaseSensor):
         # Determine if this is a live game and manage update frequency
         was_live = self._is_live_game
         
-        if live_data:
-            # Live game data available - this is the most reliable indicator
+        # Get the most current fixture to check game timing
+        current_fixture = self._current_fixture
+        
+        # Check if we have live data AND if it's for the current/upcoming game
+        if live_data and current_fixture:
+            # Validate that live data matches the current fixture timing
+            is_live_data_current = self._is_live_data_current(live_data, current_fixture)
+            
+            if is_live_data_current:
+                # Live data is for current game - use it
+                self._is_live_game = True
+                self._update_live_game_state(live_data)
+            else:
+                # Live data is stale/old - use fixture data instead
+                _LOGGER.debug(f"Game {self._team_id}: Live data appears to be from previous game, using fixture data")
+                self._is_live_game = False
+                self._update_fixture_state(current_fixture)
+        elif live_data and not current_fixture:
+            # Live data available but no fixture - use live data
             self._is_live_game = True
             self._update_live_game_state(live_data)
         else:
-            # No live data, use fixture data with improved logic
+            # No live data, use fixture data
             fixture = self._get_team_fixture()
             if fixture:
                 self._update_fixture_state(fixture)
@@ -425,6 +482,57 @@ class CEBLTeamSensor(CEBLBaseSensor):
             # Game is no longer live, stop frequent updates
             self._remove_live_updates()
             _LOGGER.debug(f"Stopped live updates for team {self._team_id}")
+
+    def _is_live_data_current(self, live_data, fixture):
+        """Check if live data is for the current/upcoming game vs old data."""
+        try:
+            from datetime import datetime
+            import pytz
+            
+            # Get fixture start time
+            fixture_start = fixture.get('start_time_utc', '')
+            if not fixture_start:
+                # No start time to compare - assume live data is current
+                return True
+            
+            # Parse fixture start time
+            try:
+                if fixture_start.endswith('Z'):
+                    fixture_dt = datetime.fromisoformat(fixture_start[:-1]).replace(tzinfo=pytz.UTC)
+                else:
+                    fixture_dt = datetime.fromisoformat(fixture_start).replace(tzinfo=pytz.UTC)
+            except Exception:
+                # Can't parse time - assume live data is current
+                return True
+            
+            # Get current time
+            now = datetime.now(pytz.UTC)
+            
+            # Check game status from fixture
+            fixture_status = fixture.get('status', '').upper()
+            
+            # If fixture says SCHEDULED and start time is in future, live data is probably old
+            if fixture_status == 'SCHEDULED' and fixture_dt > now:
+                time_until_game = (fixture_dt - now).total_seconds()
+                # If game is more than 1 hour in the future, live data is definitely old
+                if time_until_game > 3600:  # 1 hour
+                    _LOGGER.debug(f"Game {self._team_id}: Game scheduled for {fixture_dt}, {time_until_game/3600:.1f} hours away - live data is old")
+                    return False
+            
+            # Check if live data has 'live' field indicating current status
+            if 'live' in live_data:
+                is_api_live = live_data.get('live', 0) == 1
+                if not is_api_live and fixture_status == 'SCHEDULED':
+                    _LOGGER.debug(f"Game {self._team_id}: API live=0 and fixture SCHEDULED - live data is old")
+                    return False
+            
+            # If we get here, assume live data is current
+            return True
+            
+        except Exception as e:
+            _LOGGER.debug(f"Game {self._team_id}: Error validating live data currency: {e}")
+            # On error, assume live data is current to avoid breaking functionality
+            return True
 
     def _update_live_game_state(self, game_data):
         """Update state with live game data."""
