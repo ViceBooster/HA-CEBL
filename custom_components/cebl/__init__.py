@@ -53,69 +53,95 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
         """Update data via library."""
         _LOGGER.info("Fetching CEBL data from API.")
         try:
-            async with async_timeout.timeout(10):
+            # Increase timeout to 30 seconds for initial data fetch
+            async with async_timeout.timeout(30):
                 async with self.session.get(self.url_fixtures, headers=self.headers) as response:
                     if response.status != 200:
                         _LOGGER.error(f"Invalid response from API: {response.status}")
+                        # Return empty data instead of failing completely
+                        if response.status in [503, 504, 502]:  # Service unavailable, gateway timeout
+                            _LOGGER.warning("API temporarily unavailable, returning empty data")
+                            return {"fixtures": []}
                         raise UpdateFailed(f"Invalid response from API: {response.status}")
                     
                     games = await response.json()
                     _LOGGER.debug(f"Fetched raw games data: {games}")
                     
+                    # Handle case where API returns non-list data
+                    if not isinstance(games, list):
+                        _LOGGER.warning(f"API returned unexpected data format: {type(games)}")
+                        return {"fixtures": []}
+                    
                     # Filter games for selected teams and convert to expected format
                     fixtures = []
                     for game in games:
-                        home_team_id = str(game.get("home_team_id", ""))
-                        away_team_id = str(game.get("away_team_id", ""))
-                        
-                        if home_team_id in self.teams or away_team_id in self.teams:
-                            # Convert to expected fixture format
-                            fixture = {
-                                "id": game.get("id"),
-                                "homeTeam": {
-                                    "id": home_team_id,
-                                    "name": game.get("home_team_name", ""),
-                                    "logo": game.get("home_team_logo_url", ""),
-                                    "score": game.get("home_team_score", 0)
-                                },
-                                "awayTeam": {
-                                    "id": away_team_id,
-                                    "name": game.get("away_team_name", ""),
-                                    "logo": game.get("away_team_logo_url", ""),
-                                    "score": game.get("away_team_score", 0)
-                                },
-                                "status": game.get("status", ""),
-                                "competition": game.get("competition", ""),
-                                "venue_name": game.get("venue_name", ""),
-                                "period": game.get("period", 0),
-                                "start_time_utc": game.get("start_time_utc", ""),
-                                "stats_url": game.get("stats_url_en", ""),
-                                "cebl_stats_url": game.get("cebl_stats_url_en", "")
-                            }
-                            fixtures.append(fixture)
+                        try:
+                            # Handle both old and new API field formats
+                            home_team_id = str(game.get("home_team_id", "") or game.get("hometeamId", ""))
+                            away_team_id = str(game.get("away_team_id", "") or game.get("awayteamId", ""))
                             
-                            # Extract match ID from stats URL for live scores
-                            stats_url = game.get("stats_url_en", "")
-                            if "/u/CEBL/" in stats_url:
-                                try:
-                                    match_id = stats_url.split("/u/CEBL/")[1].split("/")[0]
-                                    self.match_ids[game.get("id")] = match_id
-                                    _LOGGER.debug(f"Extracted match ID {match_id} for game {game.get('id')}")
-                                except (IndexError, AttributeError):
-                                    _LOGGER.warning(f"Could not extract match ID from {stats_url}")
+                            if home_team_id in self.teams or away_team_id in self.teams:
+                                # Convert to expected fixture format - handle both API formats
+                                fixture = {
+                                    "id": game.get("id") or game.get("matchId"),
+                                    "homeTeam": {
+                                        "id": home_team_id,
+                                        "name": game.get("home_team_name", "") or game.get("homename", ""),
+                                        "logo": game.get("home_team_logo_url", "") or game.get("homelogo", ""),
+                                        "score": game.get("home_team_score", 0) or game.get("homescore", 0)
+                                    },
+                                    "awayTeam": {
+                                        "id": away_team_id,
+                                        "name": game.get("away_team_name", "") or game.get("awayname", ""),
+                                        "logo": game.get("away_team_logo_url", "") or game.get("awaylogo", ""),
+                                        "score": game.get("away_team_score", 0) or game.get("awayscore", 0)
+                                    },
+                                    "status": game.get("status", "") or game.get("matchStatus", ""),
+                                    "competition": game.get("competition", "") or game.get("competitionId", ""),
+                                    "venue_name": game.get("venue_name", ""),
+                                    "period": game.get("period", 0),
+                                    "start_time_utc": game.get("start_time_utc", "") or game.get("matchTimeUTC", ""),
+                                    "stats_url": game.get("stats_url_en", ""),
+                                    "cebl_stats_url": game.get("cebl_stats_url_en", ""),
+                                    # Add live indicator from API - THIS IS THE KEY FIELD
+                                    "live": int(game.get("live", 0)),  # 1 = live, 0 = not live
+                                    "match_status": game.get("matchStatus", ""),
+                                    "clock": game.get("clock", "00:00:00"),
+                                    "period_type": game.get("periodType", "")
+                                }
+                                fixtures.append(fixture)
+                                
+                                # Extract match ID from stats URL for live scores
+                                stats_url = game.get("stats_url_en", "")
+                                if "/u/CEBL/" in stats_url:
+                                    try:
+                                        match_id = stats_url.split("/u/CEBL/")[1].split("/")[0]
+                                        self.match_ids[game.get("id")] = match_id
+                                        _LOGGER.debug(f"Extracted match ID {match_id} for game {game.get('id')}")
+                                    except (IndexError, AttributeError):
+                                        _LOGGER.warning(f"Could not extract match ID from {stats_url}")
+                        except Exception as game_err:
+                            _LOGGER.warning(f"Error processing game data: {game_err}")
+                            continue
                     
                     _LOGGER.info(f"Filtered {len(fixtures)} fixtures for selected teams")
                     return {"fixtures": fixtures}
                     
         except aiohttp.ClientError as err:
             _LOGGER.error(f"HTTP error fetching games: {err}")
+            # Return empty data for temporary network issues
+            if "timeout" in str(err).lower() or "connection" in str(err).lower():
+                _LOGGER.warning("Network connectivity issue, returning empty data")
+                return {"fixtures": []}
             raise UpdateFailed(f"HTTP error fetching games: {err}")
         except asyncio.TimeoutError:
-            _LOGGER.error("Timeout error fetching games")
-            raise UpdateFailed("Timeout error fetching games")
+            _LOGGER.warning("Timeout error fetching games - API may be slow, returning empty data")
+            # Return empty data instead of failing - sensors will handle gracefully
+            return {"fixtures": []}
         except Exception as err:
             _LOGGER.error(f"Unexpected error fetching games: {err}")
-            raise UpdateFailed(f"Unexpected error fetching games: {err}")
+            # Return empty data for unexpected errors to prevent complete failure
+            return {"fixtures": []}
 
     async def async_update_live_scores(self, _):
         """Fetch live score data from the API using match IDs."""
@@ -131,7 +157,8 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
             try:
                 # Use the new URL pattern: /data/[MATCH_ID]/data.json
                 live_url = f"https://fibalivestats.dcd.shared.geniussports.com/data/{match_id}/data.json"
-                async with async_timeout.timeout(10):
+                # Increase timeout to 20 seconds for live data
+                async with async_timeout.timeout(20):
                     # Use minimal headers for live scores API
                     live_headers = {
                         'Accept': 'application/json',
