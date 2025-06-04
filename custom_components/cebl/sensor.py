@@ -534,8 +534,48 @@ class CEBLGameSensor(CEBLBaseSensor):
                     _LOGGER.debug(f"Game {self._team_id}: Game not started (period={period})")
             
             else:
-                _LOGGER.warning(f"Game {self._team_id}: Unrecognized live data structure")
-                return
+                # Log the actual structure to understand what we're getting
+                data_keys = list(game_data.keys()) if isinstance(game_data, dict) else str(type(game_data))
+                _LOGGER.warning(f"Game {self._team_id}: Unrecognized live data structure. Keys: {data_keys}")
+                _LOGGER.debug(f"Game {self._team_id}: Full data structure: {game_data}")
+                
+                # Try to extract basic info from unknown structure
+                # Look for common score/team fields that might exist
+                game_info = {
+                    'home_score': 0,
+                    'away_score': 0,
+                    'team_score': 0,
+                    'opponent_score': 0,
+                    'clock': '00:00:00',
+                    'period': 0,
+                    'period_type': 'UNKNOWN',
+                    'is_live_api': None
+                }
+                
+                # Try to extract basic info if it's a dict
+                if isinstance(game_data, dict):
+                    # Look for score fields
+                    for key, value in game_data.items():
+                        if 'score' in key.lower() and isinstance(value, (int, float)):
+                            game_info['team_score'] = self._safe_score(value)
+                            break
+                    
+                    # Look for clock/time fields
+                    for key in ['clock', 'time', 'gameTime']:
+                        if key in game_data:
+                            game_info['clock'] = str(game_data[key])
+                            break
+                    
+                    # Look for period fields
+                    for key in ['period', 'quarter', 'periodNumber']:
+                        if key in game_data:
+                            game_info['period'] = int(game_data.get(key, 0))
+                            break
+                
+                # Default to live state since we got live data
+                self._state = "IN"
+                self._is_live_game = True
+                _LOGGER.debug(f"Game {self._team_id}: Using fallback parsing for unknown structure")
                 
             # Update attributes with game info
             self._attributes.update({
