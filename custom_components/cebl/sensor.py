@@ -385,15 +385,13 @@ class CEBLGameSensor(CEBLBaseSensor):
         was_live = self._is_live_game
         
         if live_data:
-            # Live game data available
+            # Live game data available - this is the most reliable indicator
             self._is_live_game = True
-            self._update_live_game_state(live_data, fixture)
+            self._update_live_game_state(live_data, fixture or self._current_fixture)
         else:
-            # No live data, use fixture data
+            # No live data, use fixture data with improved logic
             fixture = self._get_team_fixture()
             if fixture:
-                game_status = fixture.get('status', '').upper()
-                self._is_live_game = game_status in ['LIVE', 'IN_PROGRESS', 'HALFTIME', 'QUARTER_BREAK']
                 self._update_fixture_state(fixture)
             else:
                 self._is_live_game = False
@@ -419,35 +417,63 @@ class CEBLGameSensor(CEBLBaseSensor):
         # Determine game status from live data
         clock = live_data.get('clock', '00:00')
         period = live_data.get('period', 0)
+        in_ot = live_data.get('inOT', 0)
         
-        # Enhanced game state logic
-        if clock == '00:00' and period >= 4:
-            # Game is over
+        # Improved game state logic - if we have live data, the game is likely live
+        # Only mark as POST if we're absolutely sure the game is over
+        is_clock_zero = clock in ['00:00', '0:00', ''] or (isinstance(clock, str) and clock.strip() == '')
+        is_game_definitely_over = is_clock_zero and period >= 4 and not in_ot
+        
+        if is_game_definitely_over:
+            # Game is definitely over - clock is 0 and we're past regulation with no OT
             self._state = "POST"
-            self._is_live_game = False  # Game ended, no longer live
-        elif period > 0 and (clock != '00:00' or period >= 1):
-            # Game is in progress
+            self._is_live_game = False
+            _LOGGER.debug(f"Game {self._team_id}: POST - Clock: {clock}, Period: {period}, OT: {in_ot}")
+        elif period > 0:
+            # Any period > 0 with live data means the game is in progress
             self._state = "IN"
             self._is_live_game = True
+            _LOGGER.debug(f"Game {self._team_id}: IN - Clock: {clock}, Period: {period}, OT: {in_ot}")
         else:
-            # Pre-game or game about to start
+            # Pre-game
             self._state = "PRE"
             self._is_live_game = False
+            _LOGGER.debug(f"Game {self._team_id}: PRE - Clock: {clock}, Period: {period}, OT: {in_ot}")
+        
+        # Extract team data from live_data structure
+        tm1 = live_data.get('tm', {}).get('1', {})
+        tm2 = live_data.get('tm', {}).get('2', {})
+        
+        # Determine which team is team1 and team2 based on home/away
+        if is_home_team:
+            team_data = tm1
+            opponent_data = tm2
+            team_score = tm1.get('score', 0)
+            opponent_score = tm2.get('score', 0)
+            team_logo = tm1.get('logoS', {}).get('url', '')
+            opponent_logo = tm2.get('logoS', {}).get('url', '')
+        else:
+            team_data = tm2
+            opponent_data = tm1
+            team_score = tm2.get('score', 0)
+            opponent_score = tm1.get('score', 0)
+            team_logo = tm2.get('logoS', {}).get('url', '')
+            opponent_logo = tm1.get('logoS', {}).get('url', '')
         
         # Build comprehensive attributes
         self._attributes = {
             "team_id": self._team_id,
             "team_name": home_team['name'] if is_home_team else away_team['name'],
-            "team_logo": live_data.get('team1_logo' if is_home_team else 'team2_logo', ''),
-            "team_score": live_data.get('team1_score' if is_home_team else 'team2_score', 0),
+            "team_logo": team_logo,
+            "team_score": team_score,
             "opponent_name": away_team['name'] if is_home_team else home_team['name'],
-            "opponent_logo": live_data.get('team2_logo' if is_home_team else 'team1_logo', ''),
-            "opponent_score": live_data.get('team2_score' if is_home_team else 'team1_score', 0),
+            "opponent_logo": opponent_logo,
+            "opponent_score": opponent_score,
             "home_away": "home" if is_home_team else "away",
             "game_clock": clock,
             "period": period,
             "period_type": live_data.get('period_type', ''),
-            "overtime": live_data.get('in_ot', 0) == 1,
+            "overtime": in_ot == 1,
             "venue": fixture.get('venue_name', ''),
             "match_id": live_data.get('match_id', ''),
             "officials": live_data.get('officials', []),
@@ -459,10 +485,10 @@ class CEBLGameSensor(CEBLBaseSensor):
             # Enhanced status tracking
             "game_status": self._state,
             "is_live": self._is_live_game,
-            "is_final": clock == '00:00' and period >= 4,
-            "score_difference": abs(live_data.get('team1_score', 0) - live_data.get('team2_score', 0)),
+            "is_final": is_game_definitely_over,
+            "score_difference": abs(team_score - opponent_score),
             # Detailed score information for POST games
-            "final_score": f"{live_data.get('team1_score' if is_home_team else 'team2_score', 0)}-{live_data.get('team2_score' if is_home_team else 'team1_score', 0)}" if self._state == "POST" else None,
+            "final_score": f"{team_score}-{opponent_score}" if self._state == "POST" else None,
             # Kick-off timing (useful for all states)
             "kick_off_in": self._calculate_kick_off_in_seconds(fixture.get('start_time_utc')),
             "kick_off_in_friendly": self._calculate_time_until_game(fixture.get('start_time_utc')),
@@ -471,7 +497,12 @@ class CEBLGameSensor(CEBLBaseSensor):
             "showing_completed_game": False,
             # Live game indicators
             "last_updated": dt.now().isoformat(),
-            "update_frequency": "30 seconds" if self._is_live_game else "1 minute"
+            "update_frequency": "30 seconds" if self._is_live_game else "1 minute",
+            # Debug info
+            "data_source": "live_data",
+            "raw_clock": clock,
+            "raw_period": period,
+            "raw_in_ot": in_ot
         }
 
     def _update_fixture_state(self, fixture):
@@ -484,16 +515,27 @@ class CEBLGameSensor(CEBLBaseSensor):
         start_time_utc = dt.parse_datetime(fixture.get('start_time_utc', ''))
         game_status = fixture.get('status', '').upper()
         
-        # Determine proper state based on game status and time
+        # Improved state determination - be more conservative about POST state
+        # Only trust fixture status for clearly completed games
         if game_status in ['LIVE', 'IN_PROGRESS', 'HALFTIME', 'QUARTER_BREAK']:
             self._state = "IN"  # Live game in progress
             self._is_live_game = True
-        elif game_status in ['COMPLETE', 'COMPLETED', 'FINAL']:
+            _LOGGER.debug(f"Game {self._team_id}: IN (fixture) - Status: {game_status}")
+        elif game_status in ['COMPLETE', 'COMPLETED', 'FINAL'] and start_time_utc and dt.now() > dt.as_local(start_time_utc) + timedelta(hours=3):
+            # Only mark as POST if the game is definitely over (status says so AND it's been 3+ hours since start)
             self._state = "POST"  # Completed game
             self._is_live_game = False
-        else:
+            _LOGGER.debug(f"Game {self._team_id}: POST (fixture) - Status: {game_status}, Hours since start: {(dt.now() - dt.as_local(start_time_utc)).total_seconds() / 3600:.1f}")
+        elif start_time_utc and dt.now() < dt.as_local(start_time_utc):
+            # Future game
             self._state = "PRE"  # Scheduled/upcoming game
             self._is_live_game = False
+            _LOGGER.debug(f"Game {self._team_id}: PRE (fixture) - Status: {game_status}")
+        else:
+            # Unknown state - be conservative and assume it could be live
+            self._state = "IN"  # Assume live if uncertain
+            self._is_live_game = True
+            _LOGGER.warning(f"Game {self._team_id}: Uncertain state, assuming IN - Status: {game_status}")
         
         self._attributes = {
             "team_id": self._team_id,
@@ -513,7 +555,7 @@ class CEBLGameSensor(CEBLBaseSensor):
             # Enhanced status tracking
             "game_status": self._state,
             "is_live": self._is_live_game,
-            "is_final": game_status in ['COMPLETE', 'COMPLETED', 'FINAL'],
+            "is_final": self._state == "POST",
             "is_upcoming": start_time_utc and dt.now() < dt.as_local(start_time_utc) if start_time_utc else False,
             "score_difference": abs(self._safe_score(home_team.get('score') if is_home_team else away_team.get('score')) - 
                                    self._safe_score(away_team.get('score') if is_home_team else home_team.get('score'))),
@@ -526,10 +568,13 @@ class CEBLGameSensor(CEBLBaseSensor):
             "kick_off_in_friendly": self._calculate_time_until_game(fixture.get('start_time_utc', '')),
             # Transition timing info
             "hours_since_game": self._calculate_hours_since_game(fixture.get('start_time_utc', ''), game_status),
-            "showing_completed_game": game_status in ['COMPLETE', 'COMPLETED', 'FINAL'],
+            "showing_completed_game": self._state == "POST",
             # Update tracking
             "last_updated": dt.now().isoformat(),
-            "update_frequency": "30 seconds" if self._is_live_game else "1 minute"
+            "update_frequency": "30 seconds" if self._is_live_game else "1 minute",
+            # Debug info
+            "data_source": "fixture_only",
+            "fixture_status": game_status
         }
 
 class CEBLTeamStatsSensor(CEBLBaseSensor):
@@ -572,7 +617,31 @@ class CEBLTeamStatsSensor(CEBLBaseSensor):
             away_team = fixture['awayTeam']
             is_home_team = str(home_team['id']) == self._team_id
             
+            # Try to get team stats from processed data first
             team_stats = live_data.get('team1_stats' if is_home_team else 'team2_stats', {})
+            
+            # If processed stats are empty, extract from raw data
+            if not team_stats:
+                tm1 = live_data.get('tm', {}).get('1', {})
+                tm2 = live_data.get('tm', {}).get('2', {})
+                team_data = tm1 if is_home_team else tm2
+                
+                team_stats = {
+                    "field_goal_percentage": team_data.get('tot_sFieldGoalsPercentage', 0),
+                    "three_point_percentage": team_data.get('tot_sThreePointersPercentage', 0),
+                    "free_throw_percentage": team_data.get('tot_sFreeThrowsPercentage', 0),
+                    "rebounds": team_data.get('tot_sReboundsTotal', 0),
+                    "assists": team_data.get('tot_sAssists', 0),
+                    "turnovers": team_data.get('tot_sTurnovers', 0),
+                    "steals": team_data.get('tot_sSteals', 0),
+                    "blocks": team_data.get('tot_sBlocks', 0),
+                    "bench_points": team_data.get('tot_sBenchPoints', 0),
+                    "points_in_paint": team_data.get('tot_sPointsInThePaint', 0),
+                    "points_from_turnovers": team_data.get('tot_sPointsFromTurnovers', 0),
+                    "fast_break_points": team_data.get('tot_sPointsFastBreak', 0),
+                    "biggest_lead": team_data.get('tot_sBiggestLead', 0),
+                    "time_leading": team_data.get('tot_sTimeLeading', 0)
+                }
             
             # State is field goal percentage
             self._state = team_stats.get('field_goal_percentage', 0)
@@ -596,7 +665,8 @@ class CEBLTeamStatsSensor(CEBLBaseSensor):
                 "time_leading": team_stats.get('time_leading', 0),
                 "is_live": True,
                 "last_updated": dt.now().isoformat(),
-                "update_frequency": "30 seconds"
+                "update_frequency": "30 seconds",
+                "data_source": "raw_tm_data" if not live_data.get('team1_stats') else "processed_data"
             }
         else:
             self._is_live_game = False
@@ -614,7 +684,8 @@ class CEBLTeamStatsSensor(CEBLBaseSensor):
                 "team_name": team_name,
                 "is_live": False,
                 "last_updated": dt.now().isoformat(),
-                "update_frequency": "1 minute"
+                "update_frequency": "1 minute",
+                "data_source": "fixture_only"
             }
         
         # Manage live update frequency
@@ -667,7 +738,34 @@ class CEBLTopScorerSensor(CEBLBaseSensor):
             away_team = fixture['awayTeam']
             is_home_team = str(home_team['id']) == self._team_id
             
+            # Try to get team players from the live data structure
             team_players = live_data.get('team1_players' if is_home_team else 'team2_players', [])
+            
+            # If the processed team_players list is empty, extract from raw data
+            if not team_players:
+                tm1 = live_data.get('tm', {}).get('1', {})
+                tm2 = live_data.get('tm', {}).get('2', {})
+                team_data = tm1 if is_home_team else tm2
+                players = team_data.get('pl', {})
+                
+                team_players = []
+                for player_id, player in players.items():
+                    if player.get('sMinutes', '0:00') != '0:00':  # Only players who played
+                        team_players.append({
+                            "name": player.get('name', ''),
+                            "jersey": player.get('shirtNumber', ''),
+                            "position": player.get('playingPosition', ''),
+                            "points": player.get('sPoints', 0),
+                            "rebounds": player.get('sReboundsTotal', 0),
+                            "assists": player.get('sAssists', 0),
+                            "minutes": player.get('sMinutes', '0:00'),
+                            "plus_minus": player.get('sPlusMinusPoints', 0),
+                            "fg_percentage": player.get('sFieldGoalsPercentage', 0),
+                            "three_point_percentage": player.get('sThreePointersPercentage', 0),
+                            "photo": player.get('photoS', ''),
+                            "starter": player.get('starter', 0),
+                            "captain": player.get('captain', 0)
+                        })
             
             # Find top scorer on this team
             top_scorer = None
@@ -698,7 +796,8 @@ class CEBLTopScorerSensor(CEBLBaseSensor):
                     "captain": top_scorer.get('captain', 0) == 1,
                     "is_live": True,
                     "last_updated": dt.now().isoformat(),
-                    "update_frequency": "30 seconds"
+                    "update_frequency": "30 seconds",
+                    "data_source": "team_players" if not live_data.get('team1_players') else "processed_data"
                 }
             else:
                 self._state = "No player data"
@@ -707,7 +806,8 @@ class CEBLTopScorerSensor(CEBLBaseSensor):
                     "team_name": home_team['name'] if is_home_team else away_team['name'],
                     "is_live": True,
                     "last_updated": dt.now().isoformat(),
-                    "update_frequency": "30 seconds"
+                    "update_frequency": "30 seconds",
+                    "data_source": "no_data"
                 }
         else:
             self._is_live_game = False
@@ -725,7 +825,8 @@ class CEBLTopScorerSensor(CEBLBaseSensor):
                 "team_name": team_name,
                 "is_live": False,
                 "last_updated": dt.now().isoformat(),
-                "update_frequency": "1 minute"
+                "update_frequency": "1 minute",
+                "data_source": "fixture_only"
             }
         
         # Manage live update frequency

@@ -4,7 +4,16 @@ todolist.md
 # Development test scripts
 test_cebl_api.py
 test_enhanced_data.py
+test_sensor_logic.py
+test_fixes.py
+test_improved_logic.py
+test_fixture_fallback.py
+debug_game_state.py
 test_requirements.txt
+
+# All test files pattern
+test_*.py
+debug_*.py
 
 # Example files
 kick_off_examples.md
