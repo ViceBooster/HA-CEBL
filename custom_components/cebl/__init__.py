@@ -168,7 +168,7 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.debug(f"No fixture found for game {game_id}, skipping live data fetch")
                 continue
             
-            # Only fetch live data if the game is actually live or about to start
+            # Only fetch live data if the game is actually live, about to start, or recently completed
             fixture_status = fixture.get('status', '').upper()
             start_time_utc = fixture.get('start_time_utc', '')
             
@@ -176,6 +176,29 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
             
             if fixture_status in ['IN', 'LIVE', 'HT', 'BT']:  # Game is definitely live
                 should_fetch_live = True
+            elif fixture_status in ['POST', 'COMPLETE'] and start_time_utc:
+                # Fetch for completed games within the last 24 hours to get final stats
+                try:
+                    from datetime import datetime
+                    import pytz
+                    
+                    if start_time_utc.endswith('Z'):
+                        fixture_dt = datetime.fromisoformat(start_time_utc[:-1]).replace(tzinfo=pytz.UTC)
+                    else:
+                        fixture_dt = datetime.fromisoformat(start_time_utc).replace(tzinfo=pytz.UTC)
+                    
+                    now = datetime.now(pytz.UTC)
+                    hours_since_game = (now - fixture_dt).total_seconds() / 3600
+                    
+                    # Fetch if game completed within last 24 hours
+                    if 0 <= hours_since_game <= 24:
+                        should_fetch_live = True
+                        _LOGGER.debug(f"Game {game_id} completed recently ({hours_since_game:.1f} hours ago), fetching final stats")
+                    else:
+                        _LOGGER.debug(f"Game {game_id} completed too long ago ({hours_since_game:.1f} hours), skipping live fetch")
+                        
+                except Exception as e:
+                    _LOGGER.debug(f"Error parsing start time for completed game {game_id}: {e}")
             elif fixture_status == 'SCHEDULED' and start_time_utc:
                 # Only fetch for scheduled games if they're starting soon (within 15 minutes)
                 try:
