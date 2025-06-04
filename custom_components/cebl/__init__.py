@@ -151,9 +151,58 @@ class CEBLDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("No match IDs available for live score updates")
             return
             
+        # Get current fixtures to check which games should have live data
+        current_fixtures = self.data.get('fixtures', []) if self.data else []
+        
         live_scores_data = {}
         
         for game_id, match_id in self.match_ids.items():
+            # Find the corresponding fixture to check if game should be live
+            fixture = None
+            for f in current_fixtures:
+                if f.get('id') == int(game_id):
+                    fixture = f
+                    break
+            
+            if not fixture:
+                _LOGGER.debug(f"No fixture found for game {game_id}, skipping live data fetch")
+                continue
+            
+            # Only fetch live data if the game is actually live or about to start
+            fixture_status = fixture.get('status', '').upper()
+            start_time_utc = fixture.get('start_time_utc', '')
+            
+            should_fetch_live = False
+            
+            if fixture_status in ['IN', 'LIVE', 'HT', 'BT']:  # Game is definitely live
+                should_fetch_live = True
+            elif fixture_status == 'SCHEDULED' and start_time_utc:
+                # Only fetch for scheduled games if they're starting soon (within 15 minutes)
+                try:
+                    from datetime import datetime
+                    import pytz
+                    
+                    if start_time_utc.endswith('Z'):
+                        fixture_dt = datetime.fromisoformat(start_time_utc[:-1]).replace(tzinfo=pytz.UTC)
+                    else:
+                        fixture_dt = datetime.fromisoformat(start_time_utc).replace(tzinfo=pytz.UTC)
+                    
+                    now = datetime.now(pytz.UTC)
+                    time_until_game = (fixture_dt - now).total_seconds()
+                    
+                    # Only fetch if game starts within 15 minutes
+                    if -900 <= time_until_game <= 900:  # 15 minutes before/after start
+                        should_fetch_live = True
+                        _LOGGER.debug(f"Game {game_id} starts soon ({time_until_game/60:.1f} min), fetching live data")
+                    else:
+                        _LOGGER.debug(f"Game {game_id} not starting soon ({time_until_game/3600:.1f} hours), skipping live fetch")
+                        
+                except Exception as e:
+                    _LOGGER.debug(f"Error parsing start time for game {game_id}: {e}")
+            
+            if not should_fetch_live:
+                _LOGGER.debug(f"Skipping live data fetch for game {game_id} (status: {fixture_status})")
+                continue
             try:
                 # Use the new URL pattern: /data/[MATCH_ID]/data.json
                 live_url = f"https://fibalivestats.dcd.shared.geniussports.com/data/{match_id}/data.json"

@@ -503,36 +503,41 @@ class CEBLTeamSensor(CEBLBaseSensor):
             # Check game status from fixture
             fixture_status = fixture.get('status', '').upper()
             
-            # If fixture says SCHEDULED and start time is in future, live data is probably old
-            # BUT only if we don't have more specific logic to handle it (like team1_*/team2_* structure)
+            # For SCHEDULED games in the future, be more aggressive about rejecting stale data
             if fixture_status == 'SCHEDULED' and fixture_dt > now:
                 time_until_game = (fixture_dt - now).total_seconds()
-                # If game is more than 1 hour in the future, live data is definitely old
-                # UNLESS it's team1_*/team2_* structure which has its own validation below
-                if time_until_game > 3600 and not ('team1_name' in live_data and 'team2_name' in live_data):  # 1 hour
-                    _LOGGER.debug(f"Game {self._team_id}: Game scheduled for {fixture_dt}, {time_until_game/3600:.1f} hours away - live data is old")
-                    return False
-            
-            # Check if live data has 'live' field indicating current status
-            if 'live' in live_data:
-                is_api_live = live_data.get('live', 0) == 1
-                if not is_api_live and fixture_status == 'SCHEDULED':
-                    _LOGGER.debug(f"Game {self._team_id}: API live=0 and fixture SCHEDULED - live data is old")
-                    return False
-            
-            # Special handling for team1_*/team2_* structure (which doesn't have 'live' field)
-            # If it's a SCHEDULED future game and we have completed game data (period=4, clock=00:00),
-            # this is definitely stale data from a previous game
-            elif 'team1_name' in live_data and 'team2_name' in live_data:
-                period = live_data.get('period', 0)
-                clock = live_data.get('clock', '00:00:00')
                 
-                # If fixture is SCHEDULED for future, but live data shows completed game, it's stale
-                if fixture_status == 'SCHEDULED' and fixture_dt > now:
-                    # Check if live data shows a completed game (period 4 + clock stopped)
+                # 1. If live data explicitly says not live and fixture is SCHEDULED for future, reject
+                if 'live' in live_data:
+                    is_api_live = live_data.get('live', 0) == 1
+                    if not is_api_live:
+                        _LOGGER.debug(f"Game {self._team_id}: API live=0 but fixture SCHEDULED for future - rejecting stale data")
+                        return False
+                
+                # 2. For any game more than 30 minutes in the future, reject live data with completed game indicators
+                if time_until_game > 1800:  # 30 minutes
+                    period = live_data.get('period', 0)
+                    clock = live_data.get('clock', '00:00:00')
+                    
+                    # Check for completed game indicators
                     is_completed_data = (period >= 4 and (clock in ['00:00', '0:00', '00:00:00'] or not clock.strip()))
                     if is_completed_data:
-                        _LOGGER.debug(f"Game {self._team_id}: team1_*/team2_* data shows completed game (period={period}, clock='{clock}') but fixture is SCHEDULED for future - live data is old")
+                        _LOGGER.debug(f"Game {self._team_id}: Completed game data (period={period}, clock='{clock}') for future SCHEDULED game - rejecting stale data")
+                        return False
+                    
+                    # Also check for scores (which shouldn't exist for future games)
+                    has_scores = False
+                    if 'homeTeam' in live_data and 'awayTeam' in live_data:
+                        home_score = live_data.get('homeTeam', {}).get('score', 0)
+                        away_score = live_data.get('awayTeam', {}).get('score', 0)
+                        has_scores = home_score > 0 or away_score > 0
+                    elif 'team1_score' in live_data or 'team2_score' in live_data:
+                        team1_score = live_data.get('team1_score', 0)
+                        team2_score = live_data.get('team2_score', 0)
+                        has_scores = team1_score > 0 or team2_score > 0
+                    
+                    if has_scores:
+                        _LOGGER.debug(f"Game {self._team_id}: Live data has scores for future SCHEDULED game - rejecting stale data")
                         return False
             
             # If we get here, assume live data is current

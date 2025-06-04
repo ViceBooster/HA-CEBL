@@ -16,7 +16,7 @@
 
 ---
 
-## 🚀 **What's New in v1.58 "Simplified Excellence"**
+## 🚀 **What's New in v1.59 "Simplified Excellence"**
 
 A **complete reimagining** of the CEBL integration! We've consolidated multiple sensors into one powerful, comprehensive sensor per team for the ultimate user experience.
 
