@@ -6,7 +6,7 @@
 
 **Transform your Home Assistant into a professional CEBL sports center!**
 
-[![Version](https://img.shields.io/badge/version-1.42-blue.svg)](https://github.com/your-repo/ha-cebl)
+[![Version](https://img.shields.io/badge/version-1.42-blue.svg)](https://github.com/ViceBooster/ha-cebl)
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -94,7 +94,7 @@ All **10 CEBL teams** with automatic discovery:
 
 1. **Add Custom Repository:**
    ```
-   URL: https://github.com/your-repo/ha-cebl
+   URL: https://github.com/ViceBooster/ha-cebl
    Category: Integration
    ```
 
@@ -325,7 +325,7 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for detai
 
 **🏀 Ready to transform your Home Assistant into a CEBL command center? 🏠**
 
-[Install Now](https://github.com/your-repo/ha-cebl) • [Documentation](https://github.com/your-repo/ha-cebl/wiki) • [Support](https://github.com/your-repo/ha-cebl/issues)
+[Install Now](https://github.com/ViceBooster/ha-cebl) • [Documentation](https://github.com/ViceBooster/ha-cebl/wiki) • [Support](https://github.com/ViceBooster/ha-cebl/issues)
 
 *Go team! 🎉*
 
