@@ -16,7 +16,7 @@
 
 ---
 
-## 🚀 **What's New in v1.48 "Championship Edition"**
+## 🚀 **What's New in v1.49 "Championship Edition"**
 
 This isn't just an update - it's a **complete transformation**! We've rebuilt the entire integration with the official CEBL API to deliver professional-grade sports data.
 
