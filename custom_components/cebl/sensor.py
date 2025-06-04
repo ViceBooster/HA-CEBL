@@ -198,11 +198,11 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
         team_fixtures = []
         for fixture in fixtures:
             try:
-                home_team_id = str(fixture['homeTeam']['id'])
-                away_team_id = str(fixture['awayTeam']['id'])
-                
-                if home_team_id == self._team_id or away_team_id == self._team_id:
-                    team_fixtures.append(fixture)
+            home_team_id = str(fixture['homeTeam']['id'])
+            away_team_id = str(fixture['awayTeam']['id'])
+            
+            if home_team_id == self._team_id or away_team_id == self._team_id:
+                team_fixtures.append(fixture)
             except (KeyError, TypeError) as e:
                 _LOGGER.debug(f"Invalid fixture data: {e}")
                 continue
@@ -310,20 +310,20 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
         
         for game_id, live_data in live_scores.items():
             try:
-                # Check if this team is in this game
-                fixture = None
+            # Check if this team is in this game
+            fixture = None
                 fixtures = data.get('fixtures', [])
                 for f in fixtures:
-                    if f.get('id') == int(game_id):
-                        fixture = f
-                        break
+                if f.get('id') == int(game_id):
+                    fixture = f
+                    break
+            
+            if fixture:
+                home_team_id = str(fixture['homeTeam']['id'])
+                away_team_id = str(fixture['awayTeam']['id'])
                 
-                if fixture:
-                    home_team_id = str(fixture['homeTeam']['id'])
-                    away_team_id = str(fixture['awayTeam']['id'])
-                    
-                    if home_team_id == self._team_id or away_team_id == self._team_id:
-                        return live_data, fixture
+                if home_team_id == self._team_id or away_team_id == self._team_id:
+                    return live_data, fixture
             except (KeyError, TypeError, ValueError) as e:
                 _LOGGER.debug(f"Error processing live data for game {game_id}: {e}")
                 continue
@@ -558,7 +558,7 @@ class CEBLTeamSensor(CEBLBaseSensor):
             if 'homeTeam' in game_data and 'awayTeam' in game_data:
                 home_team = game_data['homeTeam']
                 away_team = game_data['awayTeam']
-                is_home_team = str(home_team['id']) == self._team_id
+        is_home_team = str(home_team['id']) == self._team_id
         
                 # Use API live field as primary indicator
                 is_live_from_api = game_data.get('live', 0) == 1
@@ -763,15 +763,15 @@ class CEBLTeamSensor(CEBLBaseSensor):
                 
                 # Determine game state for tm structure
                 if period >= 4 and not is_clock_running:
-                    self._state = "POST"
+            self._state = "POST"
                     self._is_live_game = False
                     _LOGGER.debug(f"Game {self._team_id}: Game completed (period={period}, clock={clock_str})")
                 elif period > 0:
-                    self._state = "IN"
+            self._state = "IN"
                     self._is_live_game = True
                     _LOGGER.debug(f"Game {self._team_id}: Game in progress (period={period}, clock={clock_str})")
-                else:
-                    self._state = "PRE"
+        else:
+            self._state = "PRE"
                     self._is_live_game = False
                     _LOGGER.debug(f"Game {self._team_id}: Game not started (period={period})")
             else:
@@ -783,7 +783,7 @@ class CEBLTeamSensor(CEBLBaseSensor):
                 # Get fixture for additional context
                 fixture = self._get_team_fixture()
                 
-                # Basic game attributes
+                                # Basic game attributes
                 self._attributes = {
                     'team_id': self._team_id,
                     'state': self._state,
@@ -799,12 +799,24 @@ class CEBLTeamSensor(CEBLBaseSensor):
                 
                 # Add fixture context if available
                 if fixture:
+                    # Determine team-relative names
+                    home_team_name = fixture.get('homeTeam', {}).get('name', '')
+                    away_team_name = fixture.get('awayTeam', {}).get('name', '')
+                    home_team_id = str(fixture.get('homeTeam', {}).get('id', ''))
+                    is_home_team = home_team_id == self._team_id
+                    
                     self._attributes.update({
                         'game_date': fixture.get('start_time_utc', ''),
-                        'home_team': fixture.get('homeTeam', {}).get('name', ''),
-                        'away_team': fixture.get('awayTeam', {}).get('name', ''),
+                        'home_team': home_team_name,
+                        'away_team': away_team_name,
                         'venue': fixture.get('venue', ''),
-                        'game_id': fixture.get('id', '')
+                        'game_id': fixture.get('id', ''),
+                        # Team-relative attributes
+                        'team_name': home_team_name if is_home_team else away_team_name,
+                        'opponent_name': away_team_name if is_home_team else home_team_name,
+                        'team_logo': fixture.get('homeTeam', {}).get('logo', '') if is_home_team else fixture.get('awayTeam', {}).get('logo', ''),
+                        'opponent_logo': fixture.get('awayTeam', {}).get('logo', '') if is_home_team else fixture.get('homeTeam', {}).get('logo', ''),
+                        'home_away': 'home' if is_home_team else 'away'
                     })
                 
                 # Add team stats if available
@@ -817,6 +829,17 @@ class CEBLTeamSensor(CEBLBaseSensor):
                         top_scorer = self._extract_top_scorer(game_data, our_is_home)
                         if top_scorer:
                             self._attributes['top_scorer'] = top_scorer
+                            # Also add individual attributes for easier template access
+                            self._attributes.update({
+                                'top_scorer_name': top_scorer.get('name', ''),
+                                'top_scorer_photo': top_scorer.get('photo', ''),
+                                'top_scorer_points': top_scorer.get('points', 0),
+                                'top_scorer_jersey': top_scorer.get('jersey', ''),
+                                'top_scorer_position': top_scorer.get('position', ''),
+                                'top_scorer_rebounds': top_scorer.get('rebounds', 0),
+                                'top_scorer_assists': top_scorer.get('assists', 0),
+                                'top_scorer_minutes': top_scorer.get('minutes', '0:00')
+                            })
                             _LOGGER.debug(f"Game {self._team_id}: Added top scorer: {top_scorer}")
                     
                     # Extract team stats
