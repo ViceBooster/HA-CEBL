@@ -254,7 +254,7 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
             _LOGGER.debug(f"Found {len(live_games)} live games, returning first")
             return live_games[0]
         
-        # Smart transition logic between completed and upcoming games
+        # Simple transition logic: if completed game is >1 day old, move to next scheduled game
         if upcoming_games and completed_games:
             # Sort both lists
             upcoming_games.sort(key=lambda x: x[1] if x[1] else datetime.max.replace(tzinfo=pytz.UTC))
@@ -263,29 +263,21 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
             next_game = upcoming_games[0]
             recent_game = completed_games[0]
             
-            next_game_time = next_game[1]
             recent_game_time = recent_game[1]
             
-            if next_game_time and recent_game_time:
-                time_until_next = (next_game_time - now).total_seconds()
+            if recent_game_time:
                 time_since_last = (now - recent_game_time).total_seconds()
                 
-                # Transition rules:
-                # 1. If next game is within 48 hours (172800 seconds), prioritize it
-                # 2. If recent game ended more than 12 hours ago (43200 seconds) AND next game is within 7 days, show upcoming
-                # 3. Otherwise show recent game for up to 12 hours
-                
-                if time_until_next <= 172800:  # Next game within 48 hours
-                    _LOGGER.debug(f"Next game within 48 hours ({time_until_next/3600:.1f}h), showing upcoming game")
-                    return next_game[0]
-                elif time_since_last > 43200 and time_until_next <= 604800:  # Recent game >12h old AND next game within 7 days
-                    _LOGGER.debug(f"Recent game >12h old ({time_since_last/3600:.1f}h), next game within 7 days ({time_until_next/86400:.1f}d), showing upcoming game")
+                # Simple rule: If completed game is older than 1 day (86400 seconds), show upcoming game
+                if time_since_last > 86400:  # 1 day = 86400 seconds
+                    _LOGGER.debug(f"Recent game is {time_since_last/86400:.1f} days old - moving to next scheduled game")
                     return next_game[0]
                 else:
-                    _LOGGER.debug(f"Showing recent game (ended {time_since_last/3600:.1f}h ago, next game in {time_until_next/86400:.1f}d)")
+                    _LOGGER.debug(f"Recent game ended {time_since_last/3600:.1f} hours ago - still showing completed game")
                     return recent_game[0]
             else:
-                # Fallback to upcoming if times couldn't be parsed
+                # Fallback to upcoming if recent game time couldn't be parsed
+                _LOGGER.debug("Could not parse recent game time - showing upcoming game")
                 return next_game[0]
         
         if upcoming_games:
