@@ -198,11 +198,11 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
         team_fixtures = []
         for fixture in fixtures:
             try:
-            home_team_id = str(fixture['homeTeam']['id'])
-            away_team_id = str(fixture['awayTeam']['id'])
-            
-            if home_team_id == self._team_id or away_team_id == self._team_id:
-                team_fixtures.append(fixture)
+                home_team_id = str(fixture['homeTeam']['id'])
+                away_team_id = str(fixture['awayTeam']['id'])
+                
+                if home_team_id == self._team_id or away_team_id == self._team_id:
+                    team_fixtures.append(fixture)
             except (KeyError, TypeError) as e:
                 _LOGGER.debug(f"Invalid fixture data: {e}")
                 continue
@@ -310,20 +310,20 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
         
         for game_id, live_data in live_scores.items():
             try:
-            # Check if this team is in this game
-            fixture = None
+                # Check if this team is in this game
+                fixture = None
                 fixtures = data.get('fixtures', [])
                 for f in fixtures:
-                if f.get('id') == int(game_id):
-                    fixture = f
-                    break
-            
-            if fixture:
-                home_team_id = str(fixture['homeTeam']['id'])
-                away_team_id = str(fixture['awayTeam']['id'])
+                    if f.get('id') == int(game_id):
+                        fixture = f
+                        break
                 
-                if home_team_id == self._team_id or away_team_id == self._team_id:
-                    return live_data, fixture
+                if fixture:
+                    home_team_id = str(fixture['homeTeam']['id'])
+                    away_team_id = str(fixture['awayTeam']['id'])
+                    
+                    if home_team_id == self._team_id or away_team_id == self._team_id:
+                        return live_data, fixture
             except (KeyError, TypeError, ValueError) as e:
                 _LOGGER.debug(f"Error processing live data for game {game_id}: {e}")
                 continue
