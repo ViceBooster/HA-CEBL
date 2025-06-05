@@ -144,14 +144,30 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
                 
                 if now < start_time_local:
                     delta = start_time_local - now
-                    if delta.days > 0:
-                        result = f"In {delta.days} days"
-                    elif delta.seconds > 3600:
-                        hours = delta.seconds // 3600
-                        result = f"In {hours} hours"
+                    total_seconds = int(delta.total_seconds())
+                    
+                    # Calculate days, hours, and minutes
+                    days = total_seconds // 86400
+                    remaining_seconds = total_seconds % 86400
+                    hours = remaining_seconds // 3600
+                    minutes = (remaining_seconds % 3600) // 60
+                    
+                    # Build more detailed time string
+                    if days > 0:
+                        if hours > 0:
+                            result = f"In {days} day{'s' if days != 1 else ''} {hours} hour{'s' if hours != 1 else ''}"
+                        else:
+                            result = f"In {days} day{'s' if days != 1 else ''}"
+                    elif hours > 0:
+                        if minutes > 0:
+                            result = f"In {hours} hour{'s' if hours != 1 else ''} {minutes} min"
+                        else:
+                            result = f"In {hours} hour{'s' if hours != 1 else ''}"
+                    elif minutes > 0:
+                        result = f"In {minutes} minute{'s' if minutes != 1 else ''}"
                     else:
-                        minutes = delta.seconds // 60
-                        result = f"In {minutes} minutes"
+                        result = "Starting soon"
+                    
                     _LOGGER.debug(f"Calculated time_until_game: '{result}' (delta: {delta}, total_seconds: {delta.total_seconds()})")
                     return result
                 else:
@@ -200,7 +216,7 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
             try:
                 home_team_id = str(fixture['homeTeam']['id'])
                 away_team_id = str(fixture['awayTeam']['id'])
-            
+                
                 if home_team_id == self._team_id or away_team_id == self._team_id:
                     team_fixtures.append(fixture)
             except (KeyError, TypeError) as e:
@@ -319,11 +335,11 @@ class CEBLBaseSensor(CoordinatorEntity, SensorEntity):
                         break
                 
                 if fixture:
-                        home_team_id = str(fixture['homeTeam']['id'])
-                        away_team_id = str(fixture['awayTeam']['id'])
-                        
-                        if home_team_id == self._team_id or away_team_id == self._team_id:
-                            return live_data, fixture
+                    home_team_id = str(fixture['homeTeam']['id'])
+                    away_team_id = str(fixture['awayTeam']['id'])
+                    
+                    if home_team_id == self._team_id or away_team_id == self._team_id:
+                        return live_data, fixture
             except (KeyError, TypeError, ValueError) as e:
                 _LOGGER.debug(f"Error processing live data for game {game_id}: {e}")
                 continue
@@ -742,7 +758,7 @@ class CEBLTeamSensor(CEBLBaseSensor):
                 except (ValueError, IndexError):
                     is_clock_running = True
                 
-                # Determine game state for tm structure
+                                # Determine game state for tm structure
                 if period >= 4 and not is_clock_running:
                     self._state = "POST"
                     self._is_live_game = False
@@ -929,7 +945,8 @@ class CEBLTeamSensor(CEBLBaseSensor):
             # Consistency check
             "timing_consistency_check": {
                 "kick_off_seconds": kick_off_seconds,
-                "friendly_matches_seconds": kick_off_friendly == "Starting soon" if kick_off_seconds and kick_off_seconds < 0 else kick_off_friendly,
+                "friendly_display": kick_off_friendly,
+                "seconds_to_hours": f"{kick_off_seconds / 3600:.1f} hours" if kick_off_seconds else "N/A",
                 "all_use_same_start_time": start_time_utc_str
             }
         }
